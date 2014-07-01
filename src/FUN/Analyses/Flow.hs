@@ -54,12 +54,14 @@ solveFlowConstraints c0 =
                                                                       else (mempty, mempty, mempty, S.singleton r)
         
       findReachable :: Set FVar -> Set FVar
-      findReachable src = src >>~ \v -> equalities >>~ \(a, b) -> if v == a && not (b `S.member` src)
-                                                                     then S.singleton b
-                                                                     else
-                                                                  if v == b && not (a `S.member` src)
-                                                                     then S.singleton a
-                                                                     else mempty
+      findReachable src = src        >>~ \v      -> 
+                          equalities >>~ \(a, b) -> 
+                            if v == a && not (b `S.member` src)
+                               then S.singleton b
+                               else
+                            if v == b && not (a `S.member` src)
+                               then S.singleton a
+                               else mempty
         
       
       

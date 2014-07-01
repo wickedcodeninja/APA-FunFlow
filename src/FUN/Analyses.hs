@@ -860,7 +860,6 @@ instance Monoid TSubst where
   s `mappend` t = TSubst $ do st <- getTSubst (subst s t) 
                               s' <- getTSubst s
                               return $ st `M.union` s' 
-  --s `mappend` t = TSubst $ getTSubst s `M.union` getTSubst (subst s t)
   mempty        = TSubst $ return M.empty
   
 data Env = Env { 
@@ -873,19 +872,19 @@ data Env = Env {
 instance Subst TSubst (Analysis Type) where 
   subst m = join . fmap subst' where 
     subst' :: Type -> Analysis Type
-    subst' f@(TVar n) = do m' <- getTSubst m
-                           instantiate (M.findWithDefault (Type f) n m')
+    subst' f@(TVar n) = do env <- getTSubst m
+                           instantiate (M.findWithDefault (Type f) n env)
     subst' r@ TBool     = return $ r
     subst' r@(TInt _ _) = return $ r
 
-    subst' (TArr  f    a b) = do a' <- subst m (return a)
-                                 b' <- subst m (return b)
+    subst' (TArr  f    a b) = do a' <- substM m a
+                                 b' <- substM m b
                                  return $ TArr f a' b'
-    subst' (TProd f nm a b) = do a' <- subst m (return a)
-                                 b' <- subst m (return b)
+    subst' (TProd f nm a b) = do a' <- substM m a
+                                 b' <- substM m b
                                  return $ TProd f nm a' b'
-    subst' (TSum  f nm a b) = do a' <- subst m (return a)
-                                 b' <- subst m (return b)
+    subst' (TSum  f nm a b) = do a' <- substM m a
+                                 b' <- substM m b
                                  return $ TSum  f nm a' b'
     subst' (TUnit f nm)     = return $ TUnit f nm
 
@@ -899,20 +898,20 @@ instance Subst Env (Analysis Type) where
     subst' r@(TInt s b)     = do let s' = subst (scaleMap m) s
                                  let b' = subst (baseMap m) b
                                  return $ TInt s' b'
-    subst' f@(TVar _)       = subst (typeMap m) (return f)
+    subst' f@(TVar _)       = substM (typeMap m) f
     
     subst' (TArr  f    a b) = do let f' = subst (flowMap m) f
-                                 a' <- subst m (return a)
-                                 b' <- subst m (return b)
+                                 a' <- substM m a
+                                 b' <- substM m b
                                  return $ TArr f' a' b'
                                  
     subst' (TProd f nm a b) = do let f' = subst (flowMap m) f
-                                 a' <- subst m (return a)
-                                 b' <- subst m (return b)
+                                 a' <- substM m a
+                                 b' <- substM m b
                                  return $ TProd f' nm a' b'
     subst' (TSum  f nm a b) = do let f' = subst (flowMap m) f
-                                 a' <- subst m (return a)
-                                 b' <- subst m (return b)
+                                 a' <- substM m a
+                                 b' <- substM m b
                                  return $ TSum  f' nm a' b'
     subst' (TUnit f nm)     = do let f' = subst (flowMap m) f
                                  return $ TUnit f' nm
@@ -921,10 +920,10 @@ instance Subst Env (Analysis TypeScheme) where
   subst m d = 
     do d <- d
        case d of
-          Type ty -> do ty' <- subst m (return ty)
-                        return $ Type ty'
-          Scheme bnds ty -> do ty' <- subst m (return ty)
-                               return $ Scheme bnds ty'
+          Type ty -> do ty <- substM m ty
+                        return $ Type ty
+          Scheme bnds ty -> do ty <- substM m ty
+                               return $ Scheme bnds ty
 instance Subst Env Env where
   subst m env = env { typeMap = TSubst $ do r <- getTSubst . typeMap $ env 
                                             sequenceMap . fmap (subst m . return) $ r
@@ -988,10 +987,10 @@ instance Subst BSubst Constraint where
 -- * Singleton Constructors
 
 instance Singleton Env (TVar, Type) where
-  singleton (k, a) = mempty { typeMap = TSubst $ return $ M.singleton k (Type a) } 
+  singleton (k, a) = mempty { typeMap = TSubst . return $ M.singleton k (Type a) } 
 
 instance Singleton Env (TVar, TypeScheme) where
-  singleton (k, a) = mempty { typeMap = TSubst $ return $ M.singleton k a } 
+  singleton (k, a) = mempty { typeMap = TSubst . return $ M.singleton k a } 
   
 instance Singleton Env (FVar, Flow) where
   singleton (k, a) = mempty { flowMap = FSubst $ M.singleton k a }

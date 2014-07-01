@@ -548,7 +548,6 @@ instance Subst SSubst Scale where
    
 instance Monoid SSubst where
   s `mappend` t = SSubst $ getSSubst (subst s t) `M.union` getSSubst s 
-  --s `mappend` t = SSubst $ let m = subst s t in getSSubst (subst m s) `M.union` getSSubst m 
   mempty        = SSubst $ M.empty
                 
 instance Singleton SSubst (SVar,Scale) where
@@ -578,7 +577,6 @@ instance Subst BSubst (Base, Base, Base) where
   
 instance Monoid BSubst where
   s `mappend` t = BSubst $ getBSubst (subst s t) `M.union` getBSubst s
-  --s `mappend` t = BSubst $ let m = subst s t in getBSubst (subst m s) `M.union` getBSubst m
   mempty        = BSubst $ mempty
   
 instance Singleton BSubst (BVar, Base) where
