@@ -631,8 +631,10 @@ printProgram cp (Prog p) env =
   
 showScheme :: PrintAnnotations -> TypeScheme -> String
 showScheme ann (Type ty) = showType ann ty
-showScheme ann (Scheme bnds ty) = "forall " ++ (concat . L.intersperse " " . S.toList $ bnds) ++ " . " ++ showType ann ty
-
+showScheme ann (Scheme bnds ty) = forallString ++ showType ann ty where
+  forallString = if not (S.null bnds)
+                    then "forall " ++ (concat . L.intersperse " " . S.toList $ bnds) ++ " . "
+                    else ""
 -- |Pretty print a given type. The PrintAnnotation parameter is used to find-tune
 --  the printing of type annotations.
 showType :: PrintAnnotations -> Type -> String
