@@ -252,8 +252,10 @@ analyse exp env = case exp of
                         b_0 <- fresh
 
                         (t0, s0, c0) <- analyse e . (x ~> a_x) $ env
-                        a_x' <- subst s0 (return a_x)
-                        return ( TArr b_0 a_x' t0
+                        
+                        a_x <- substM s0 a_x
+                        
+                        return ( TArr b_0 a_x t0
                                , s0
                                , c0 `union` simpleFlow b_0 pi
                                )
@@ -263,15 +265,18 @@ analyse exp env = case exp of
                         b_0 <- fresh
 
                         (t0, s0, c0) <- analyse e . (f ~> TArr b_0 a_x a_0) . (x ~> a_x) $ env
-                        a_0' <- subst s0 (return a_0)
-                        (    s1, c1) <- t0 `unify` a_0' 
+                        
+                        a_0 <- substM s0 a_0
+                        
+                        (s1, c1) <- t0 `unify` a_0
 
                         let b_1 = subst (s1 <> s0) b_0
 
                         
-                        t0' <- subst s1 (return t0)
-                        a_x' <- subst (s1 <> s0) (return a_x)
-                        return ( TArr b_1 a_x' t0'
+                        t0  <- substM s1 t0
+                        a_x <- substM (s1 <> s0) a_x
+                        
+                        return ( TArr b_1 a_x t0
                                , s1 <> s0
                                , subst s1 c0 `union` 
                                           c1 `union` simpleFlow b_1 pi
@@ -284,11 +289,13 @@ analyse exp env = case exp of
                         a <- fresh;
                         b <- fresh
 
-                        t1' <- subst s2 (return t1)
-                        (    s3, c3) <- t1' `unify` TArr b t2 a
+                        t1 <- substM s2 t1
+                        
+                        (s3, c3) <- t1 `unify` TArr b t2 a
 
-                        a' <- subst s3 (return a)
-                        return ( a'
+                        a <- substM s3 a
+                        
+                        return ( a
                                , s3 <> s2 <> s1
                                , subst (s3 <> s2) c1 `union`
                                  subst  s3        c2 `union`
@@ -314,16 +321,16 @@ analyse exp env = case exp of
                         (t1, s1, c1) <- analyse e1 . subst s0 $ env
                         (t2, s2, c2) <- analyse e2 . subst (s1 <> s0) $ env
 
-                        t0 <- subst (s2 <> s1) (return t0)
+                        t0 <- substM (s2 <> s1) t0
                         
                         (    s3, c3) <- t0 `unify` TBool
                         
-                        t1 <- subst (s3 <> s2) (return t1)
-                        t2 <- subst s3 (return t2)
+                        t1 <- substM (s3 <> s2) t1
+                        t2 <- substM  s3        t2
 
                         (    s4, c4) <- t1 `unify` t2;
 
-                        t2 <- subst (s4 <> s3) (return t2)
+                        t2 <- substM  s4        t2
                         
                         return ( t2 
                                , s4 <> s3 <> s2 <> s1
@@ -347,7 +354,7 @@ analyse exp env = case exp of
 
                                b_0 <- fresh
 
-                               t1 <- subst s2 (return t1)
+                               t1 <- substM s2 t1
                                
                                return ( TProd b_0 nm t1 t2
                                       , s2 <> s1
@@ -423,7 +430,7 @@ analyse exp env = case exp of
 
                                               (    s5, c5) <- tx `unify` ty
 
-                                              tx <- subst s5 (return tx)
+                                              tx <- substM s5 tx
                                               
                                               return ( tx
                                                      , s5 <> s4 <> s3 <> s2 <> s1

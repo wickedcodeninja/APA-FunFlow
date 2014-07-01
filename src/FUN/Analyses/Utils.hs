@@ -1,6 +1,6 @@
 -- (C) 2013 Pepijn Kokke & Wout Elsinghorst
 
-{-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE FlexibleInstances, GADTs #-}
 {-# LANGUAGE MultiParamTypeClasses, FunctionalDependencies #-}
 module FUN.Analyses.Utils where
 
@@ -22,6 +22,10 @@ class Solver c s | c -> s where
 
 class Subst e w where
   subst :: e -> w -> w
+ 
+substM :: (Subst e w, w ~ m a, Monad m) => e -> a -> w
+substM e = subst e . return
+ 
   
 instance (Subst e a) => Subst e [a] where
   subst m = map (subst m)
