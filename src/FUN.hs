@@ -1,4 +1,5 @@
 -- (C) 2013 Pepijn Kokke & Wout Elsinghorst
+-- (C) 2014 Wout Elsinhorst
 
 module FUN
   ( module FUN.Base
@@ -61,13 +62,20 @@ main =
 -- * Example code
   
 -- |Selected Examples to show our code in action
-example = Prog $ case 1 of 
+example = Prog $ case 1 of
+                   0 -> exGen
                    1 -> exMeasure       -- ^ Main program showing our 'units of measure' capabilities
                    2 -> exEverything    -- ^ A whole bunch of random snippets, showing our language and program point tracking
                    3 -> exLoop True     -- ^ Loop program from the book, unfolded to show non-toplevel statements
                    4 -> exLoop False    -- ^ Loop program from the book, in original presentation. Only the toplevel 
                                         -- ^   type is displayed, so intermediate results cannot be checked
 
+
+exGen = fmap parseDecl $ 
+  [ "f x = x"
+  , "g y = let r x = x in Pair (r false, r 3)" 
+  ]
+                                        
 exMeasure = fmap parseDecl $
   [ "s1 = asMeters 3"
   , "t1 = asSeconds 5"
