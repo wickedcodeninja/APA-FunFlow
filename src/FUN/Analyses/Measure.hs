@@ -54,6 +54,16 @@ instance Show Scale where
   show (SMul a b)         = "(" ++ show a ++ "*" ++ show b ++ ")"
   show (SInv a)           = "(1/" ++ show a ++ ")"
    
+data MeasurementError = EmptyError
+   deriving Show
+   
+unifyScale :: Scale -> Scale -> Either MeasurementError SSubst
+unifyScale p q = unifyOne $ SMul p (SInv q)
+  
+unifyOne :: Scale -> Either MeasurementError SSubst
+unifyOne p = Right mempty
+   
+   
 instance Show Base where
   show BNil     = "None"
   show (BVar v) = "[" ++ v ++ "]"
@@ -87,309 +97,11 @@ instance Show BaseConstraint where
                               ++  "; if " ++ show x ++ " = none then " ++ show y
                               ++  "; else error"
 
--- * Constraint Solving
-
-class Rewrite s where
-  simplify :: s -> s
-    
-instance Rewrite ScaleConstraint where
-  simplify (ScaleEquality ss) = ScaleEquality $ simplify ss 
-    
-instance Rewrite SSubst where
-  simplify (SSubst r) = SSubst $ M.map simplify r
-
-instance (Rewrite a, Ord a) => Rewrite [a] where
-  simplify = map simplify
-  
-instance (Rewrite a, Ord a) => Rewrite (Set a) where
-  simplify = S.map simplify
-    
-onlySVars :: Scale -> Bool
-onlySVars (SVar _)          = True
-onlySVars (SInv (SVar _))   = True
-onlySVars (SMul a       (SVar _))   = onlySVars a
-onlySVars (SMul a (SInv (SVar _)) ) = onlySVars a
-onlySVars _                 = False
-
-isNormal :: Scale -> Bool
-isNormal s | onlySVars s           = True
-isNormal               (SCon _)    = True
-isNormal         (SInv (SCon _))   = True
-isNormal (SMul a       (SCon _)  ) = isNormal a
-isNormal (SMul a (SInv (SCon _)) ) = isNormal a 
-
-isNormal (SMul a       (SVar _)  ) = onlySVars a
-isNormal (SMul a (SInv (SVar _)) ) = onlySVars a
-
-isNormal _                         = False
-
-
--- |Insert a Scale into a normalized Scale, preserving the normalisation property
-normalizedInsert :: Scale -> Scale -> Scale
-normalizedInsert a@(SInv SNil)     b = b
-normalizedInsert a@SNil            b = b
-
-normalizedInsert a@(SInv (SInv x)) b = normalizedInsert x b
-
-normalizedInsert a@(SCon _) b@ SNil       = a
-normalizedInsert a@(SCon _) b@(SInv SNil) = a
-normalizedInsert a@(SCon _) b             = SMul b a
-
-normalizedInsert a@(SInv (SCon _)) b@ SNil       = a
-normalizedInsert a@(SInv (SCon _)) b@(SInv SNil) = a
-normalizedInsert a@(SInv (SCon _)) b             = SMul b a
-
-normalizedInsert a@(SInv (SMul x y)) b = normalizedInsert (SInv x) (normalizedInsert (SInv y) b)
-
-normalizedInsert a@(SVar _) b = 
-  case b of 
-    SNil            -> a
-    (SInv SNil)     -> a
-    (SCon _)        -> SMul a b
-    (SInv (SCon _)) -> SMul a b
-    (SVar _)        -> SMul b a
-    (SInv (SVar _)) -> SMul b a
-    (SMul x y)      -> SMul (normalizedInsert a x) y
-  
-normalizedInsert a@(SInv (SVar _)) b = 
-  case b of 
-    SNil            -> a
-    (SInv SNil)     -> a
-    (SCon _)        -> SMul a b
-    (SInv (SCon _)) -> SMul a b
-    (SVar _)        -> SMul a b
-    (SInv (SVar _)) -> SMul a b
-    (SMul x y)      -> SMul (normalizedInsert a x) y
-
-normalizedInsert a@(SMul x y) b = normalizedInsert y (normalizedInsert x b)
-
--- |Normalize a Scale by inserting it into the Unit Scale 
-normalize :: Scale -> Scale
-normalize t = normalizedInsert t SNil
-
-
--- |Split a Single scale into a two lists of atomic Scales, one with all the Cons 
---  and one with all the Vars.
-splitScale :: Scale -> ([Scale], [Scale])
-splitScale s | not (isNormal s) = splitScale (normalize s) -- |Yes, this is slow, we don't care
-             | otherwise        = span (\t -> case t of 
-                                                  (SCon _)      -> True
-                                                  SInv (SCon _) -> True
-                                                  _             -> False
-                                        ) . scaleToList $ s where
-  scaleToList :: Scale -> [Scale]
-  scaleToList SNil = []
-  scaleToList a@(SCon _)        = [a]
-  scaleToList a@(SInv (SCon _)) = [a]
-  scaleToList a@(SVar _)        = [a]
-  scaleToList a@(SInv (SVar _)) = [a]
-  scaleToList (SMul x y) = y : scaleToList x
-
- 
--- |Merge a list of Con Sclaes and a list of Var Scales into a single Scale
---  which is put into Scale Normal Form (SNF)
-mergeScale :: ([Scale], [Scale]) -> Scale
-mergeScale (s, v) = foldr (\x xs -> SMul xs x) SNil $ s ++ v
-
-
--- |Simplify a Scale expression by removing canceling terms and moving reciprocals inwards.
---  Most reductions (except for moving reciprocals inwards) are probably made obsolete by 
---  the `unifyScaleEquality` phase, but leaving them here makes this function useful for 
---  other purposes besides constraint solving.
-instance Rewrite Scale where  
-  simplify (SInv SNil)          = SNil
-  simplify (SInv (SInv a))      = simplify a
-  simplify (SInv (SMul a b))    = SMul (simplify $ SInv a) (simplify $ SInv b)
-  
-  simplify (SMul a SNil)        = simplify a
-  simplify (SMul SNil a)        = simplify a
-
-  simplify (SMul a (SInv SNil)) = simplify a
-  simplify (SMul (SInv SNil) a) = simplify a
-  
-  simplify (SMul a (SInv b))    | a == b = SNil 
-  simplify (SMul (SInv a) b)    | a == b = SNil
-                                     
-  simplify (SMul (SMul a (SInv b)) c) | b == c = simplify a
-  simplify (SMul (SMul (SInv a) b) c) | a == c = simplify b
-  simplify (SMul a (SMul b (SInv c))) | a == c = simplify b
-  simplify (SMul a (SMul (SInv b) c)) | a == b = simplify c  
-
-  simplify x@(SMul a b) | not (isNormal x) = normalize x
-       
-  simplify v@_ = v
 
 -- |Number of times to repeat the various algorithms which have no guaranteed fixed point.
 iterationCount :: Int
 iterationCount = 8
-  
--- |Try to find a substitution that unifies as many Scale constraints as possible.
---  All constraints are equality constraints, and the @solveBaseEquality phase is
---  idempotent. Unfortunately, due to non-linear nesting, not all constraints can
---  be handled in this way. Equality solving is done in different rounds, each 
---  round ending with a simplify phase that tries to mend the Scale constraints
---  into a normal form. Because this no normal form is guaranteed to be reached,
---  there is a hard coded limit on how rounds to try.
-solveScaleConstraints :: Set ScaleConstraint -> (SSubst, Set ScaleConstraint)
-solveScaleConstraints = wrap (loop iterationCount mempty)  where   
-  loop 0 s0 c0 = (reducer s0, reducer c0)
-  loop n s0 c0 = 
-    let (s1, c1) = simplifyScaleEquality $ reducer c0
-        (    c2) = unionMap unifyScaleEquality $ c1
-    in loop (n-1) (s1 <> reducer s0) c2
-
-  reducer :: Rewrite a => a -> a
-  reducer = loop 2 where
-    loop 0 = id
-    loop n = loop (n-1) . simplify
-    
-
-  wrap f = pack . f . unpack where  
-    pack = fmap (S.map ScaleEquality)
-    unpack = S.map (\(ScaleEquality gr) -> gr)
-
-type ScaleEquality = Set Scale
-
--- |Split a n-ary equality into a set of binary equalities and for each binary equality
---  balance the terms such that all reciprocals on one side are replaced with non-reciprocals
---  on the other.
-unifyScaleEquality :: ScaleEquality -> Set ScaleEquality
-unifyScaleEquality cs =
-  let reduceEquality a b = 
-        let -- |Split a single nested Scale into a two lists of atomic Scales
-            (conListA, varListA) = splitScale a
-            (conListB, varListB) = splitScale b
-                                    
-            
-            -- |Balance Cons
-            simplifiedConList = fmap (reconstruct . getCount) $ names where
-              -- |Collect the names of all the Cons on both sides
-              names = nub $ fmap getNames (conListA ++ conListB) where
-                getNames s = case s of 
-                              SCon nm        -> nm
-                              SInv (SCon nm) -> nm
-
-              -- |For each Con, count the multiplicity on each side
-              getCount nm = (nm, subCount conListA, subCount conListB) where
-                subCount = foldr (\x xs -> case x of
-                                              SCon r        -> if nm == r then xs + 1 else xs
-                                              SInv (SCon r) -> if nm == r then xs - 1 else xs
-                                 ) 0 
-              -- |Reconstruct the Cons of the equality, putting everything on the correct side
-              --  such that reciprocals are avoided
-              reconstruct (nm, countA, countB) = 
-                let diff = countA - countB
-                in if diff > 0
-                      then (replicate diff $ SCon nm, [])
-                      else
-                  if diff < 0
-                      then ([], replicate (negate diff) $ SCon nm)
-                      else ([], [])
-
-            -- |Balance Vars
-            simplifiedVarList = fmap (reconstruct . getCount) $ names where
-              -- |Collect the names of all the Vars on both sides
-              names = nub $ fmap getNames (varListA ++ varListB) where
-              getNames s = case s of 
-                              SVar nm        -> nm
-                              SInv (SVar nm) -> nm
-
-              -- |For each Con, count the multiplicity on each side
-              getCount nm = (nm, subCount varListA, subCount varListB) where
-                subCount = foldr (\x xs -> case x of
-                                              SVar r        -> if nm == r then xs + 1 else xs
-                                              SInv (SVar r) -> if nm == r then xs - 1 else xs
-                                 ) 0 
-              -- |Reconstruct the Vars of the equality, putting everything on the correct side
-              --  such that reciprocals are avoided
-              reconstruct (nm, countA, countB) = 
-                let diff = countA - countB
-                in if diff > 0
-                      then (replicate diff $ SVar nm, [])
-                      else
-                  if diff < 0
-                      then ([], replicate (negate diff) $ SVar nm)
-                      else ([], [])
-
-                      
-            simplifiedConListA = concatMap fst simplifiedConList
-            simplifiedConListB = concatMap snd simplifiedConList
-
-            simplifiedVarListA = concatMap fst simplifiedVarList
-            simplifiedVarListB = concatMap snd simplifiedVarList
-  
-            -- |Merge the list of atomic Scales back into a single chained Scale
-            mergedA = mergeScale $ (simplifiedConListA, simplifiedVarListA)
-            mergedB = mergeScale $ (simplifiedConListB, simplifiedVarListB)
-            
-            -- |Don't generate empty equalities 
-            pickyA = if mergedA /= SNil then [mergedA] else [] 
-            pickyB = if mergedB /= SNil then [mergedB] else [] 
-            
-        in S.fromList $ pickyA ++ pickyB
-              
-  in case S.size cs of
-       0 -> S.empty
-       1 -> S.empty
-       2 -> -- |Reduce a binary equality
-            let [a, b] = S.toList $ cs
-            in S.singleton $ reduceEquality a b
-            -- |Split a n-ary equality into a bunch of
-            --  binary equalities
-       _ -> unionMap unifyScaleEquality $ cs >>~ \a -> 
-                                          cs >>~ \b -> if a == b 
-                                                          then S.empty 
-                                                          else S.singleton $ S.fromList [a, b]
-
-instance Solver ScaleConstraint SSubst where
-  solveConstraints = solveScaleConstraints
-
-  
--- |Iteratively reduce equality constraints until no more reductions are possible.
-simplifyScaleEquality:: Set ScaleEquality -> (SSubst, Set ScaleEquality)
-simplifyScaleEquality = loop mempty where
-  loop s0 c0 =
-    let s1 = F.foldMap solveCons c0
-    in if s1 == mempty
-          then (s0, c0)
-          else loop (s1 <> s0) (subst s1 c0)
-   
-  solveCons cs = withSingle (single cons) where
-    list = S.toList cs
-    
-    cons = getSCons list
-    vars = getSVars list
-    
-    -- |If there is precisely one definite Scale, take it and unify 
-    --  all Scale variables with it. If there are no definite scales
-    --  in the equality constraint, try to take a Scale variable and
-    --  unify all other variables with it. If there are two or more
-    --  definite Scales known then no further unification is possible
-    --  at this point.
-    single [ ] = case vars of
-                       [ ] -> Nothing
-                       [x] -> Nothing
-                       (x:y:xs) -> Just $ SVar x
-    single [x] = Just $ x
-    single  _  = Nothing
-    
-    -- |If one unification step is found, apply it to all Scale variables.
-    withSingle (Just  x) = foldr (\v m -> m <> singleton (v,x)) mempty vars
-    withSingle (Nothing) = mempty
-    
-  -- |A list of all definite Scales in this Eq constraint
-  getSCons = filter isSCon where
-    isSCon  (SNil    ) = True
-    isSCon  (SCon _  ) = True
-    isSCon  (SInv a  ) = True -- isSCon a
-    isSCon  (SMul a b) = True -- isSCon a && isSCon b
-    isSCon  (SVar _  ) = False
-
-  -- |A list of all Scale variables in this eq constraint
-  getSVars = concatMap $ \t ->
-    case t of SVar v -> [v]
-              _      -> [ ]
-       
+                              
 -- |Solve Base constraints. The equality case is the same as in the Scale case.
 solveBaseConstraints :: Set BaseConstraint -> (BSubst, Set BaseConstraint)
 solveBaseConstraints = loop iterationCount mempty where
@@ -437,7 +149,7 @@ instance Solver BaseConstraint BSubst where
 
 type BaseSelection = (Base, Base, Base)
   
--- |Constraints added by addition of two variables  
+-- |Constraints added by addition of two vagriables  
 solveBaseSelection :: Set BaseSelection -> (BSubst, Set BaseSelection)
 solveBaseSelection = F.foldMap solver where
   solver r@(x, y, BVar z) = if x == BNil

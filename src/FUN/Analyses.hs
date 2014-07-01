@@ -74,6 +74,7 @@ data TypeError
   | UnboundVariable TVar      -- ^ thrown when unknown variable is encountered
   | OccursCheck     TVar Type -- ^ thrown when occurs check in unify fails
   | CannotUnify     Type Type -- ^ thrown when types cannot be unified
+  | CannotUnifyMeasurement MeasurementError
   | OtherError      String    -- ^ stores miscellaneous errors
  -- deriving Eq
 
@@ -195,7 +196,7 @@ analyseProgram (Prog ds) =
                                      let (f_s1, f_c1) = solveConstraints . extractFlowConstraints $ c0
                                          c1 = S.map FlowConstraint f_c1                                        
                                          
-                                         (s_s2, s_c2) = solveConstraints . extractScaleConstraints $ c0
+                                         (      s_c2) =                    extractScaleConstraints $ c0
                                          c2 = S.map ScaleConstraint s_c2     
                                      
                                          (b_s3, b_c3) = solveConstraints . extractBaseConstraints  $ c0
@@ -205,9 +206,9 @@ analyseProgram (Prog ds) =
                                          
                                      -- |Return the refined environment, the input program together with prelude and
                                      --  a set of unsolved constraints.
-                                     return ( subst b_s3 . subst s_s2 . subst f_s1 $ finalEnv
+                                     return ( subst b_s3 {- . subst s_s2 -} . subst f_s1 $ finalEnv
                                             , Prog $ labeledLib ++ labeledDecls
-                                            , simplify $ c1 `union` c2 `union` c3
+                                            , c1 `union` c2 `union` c3
                                             )
 
 instantiate :: TypeScheme -> Analysis Type
@@ -483,7 +484,11 @@ analyse exp env = case exp of
 --  failure paths are introduced compared to bare W unification.
 unify :: Type -> Type -> Analysis (Env, Set Constraint)
 unify TBool TBool = return $ mempty
-unify (TInt r1 b1) (TInt r2 b2) = return (mempty, scaleEquality [r1, r2] `union` baseEquality [b1, b2])
+unify (TInt r1 b1) (TInt r2 b2) 
+                  = do let result = unifyScale r1 r2
+                       case result of
+                            Left err -> throwError (CannotUnifyMeasurement err)
+                            Right scaleSubst -> return (mempty { scaleMap = scaleSubst }, baseEquality [b1, b2])
 unify (TArr p1 a1 b1) (TArr p2 a2 b2)
                   = do let c0 = flowEquality p1 p2
                        (s1, c1) <- a1 `unify` a2
@@ -707,13 +712,9 @@ instance Show TypeError where
   show (UnboundVariable  n) = printf "Unknown variable %s" n
   show (OccursCheck    n t) = printf "Occurs check fails: %s occurs in %s" n (show t)
   show (CannotUnify    a b) = printf "Cannot unify %s with %s" (show a) (show b)
+  show (CannotUnifyMeasurement err) =  show err 
   show (OtherError     msg) = msg
 
-
-
-instance Rewrite Constraint where
-  simplify (ScaleConstraint ss) = ScaleConstraint $ simplify ss
-  simplify v@_ = v
 
   
 -- * Constraints
