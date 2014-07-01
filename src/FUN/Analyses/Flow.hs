@@ -128,8 +128,8 @@ instance Subst FSubst FSubst where
 
  
 instance Monoid FSubst where
-  s `mappend` t = FSubst $ let m = subst s t 
-                           in getFSubst (subst m s) `M.union` getFSubst m
+  s `mappend` t = FSubst $ getFSubst (subst s t) `M.union` getFSubst s
+  --s `mappend` t = FSubst $ let m = subst s t in getFSubst (subst m s) `M.union` getFSubst m      
   mempty        = FSubst $ mempty
   
 instance Singleton FSubst (FVar, Flow) where

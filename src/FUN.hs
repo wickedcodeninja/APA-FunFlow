@@ -41,14 +41,14 @@ main :: IO ()
 main = 
   let annotations = setAnnotations [ ProgramPoints            -- ^Set which annotations to print. Leave
                                    , FlowInformation          --  empty to just print the W-inferred 
-                                   , MeasureInformation       --  types.
+                                   --, MeasureInformation       --  types.
                                    ]
         
       showResult :: (Env, Program, Set Constraint) -> String
       showResult (m, p, w) =  let programInfo = "program = " ++ printProgram annotations p m
                                   flowInfo  = "unresolved flow constraints = "
                                     ++ (printFlowInformation . extractFlowConstraints $ w)
-                                  scaleInfo  = "unresolved scale constraints = "
+                                  scaleInfo = "unresolved scale constraints = "
                                     ++ (printScaleInformation . extractScaleConstraints $ w)
                                   baseInfo  = "unresolved base constraints = "
                                     ++ (printBaseInformation . extractBaseConstraints $ w)
@@ -62,7 +62,7 @@ main =
 -- * Example code
   
 -- |Selected Examples to show our code in action
-example = Prog $ case 1 of
+example = Prog $ case 2 of
                    0 -> exGen
                    1 -> exMeasure       -- ^ Main program showing our 'units of measure' capabilities
                    2 -> exEverything    -- ^ A whole bunch of random snippets, showing our language and program point tracking

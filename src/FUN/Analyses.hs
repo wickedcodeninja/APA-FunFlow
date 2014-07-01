@@ -715,9 +715,10 @@ instance Subst SSubst TSubst where
 
 instance Subst BSubst TSubst where
   subst m (TSubst r) = TSubst $ M.map (subst m) r
-  
+ 
 instance Monoid TSubst where
-  s `mappend` t = TSubst $ getTSubst s `M.union` getTSubst (subst s t)
+  s `mappend` t = TSubst $ getTSubst (subst s t) `M.union` getTSubst s 
+  --s `mappend` t = TSubst $ getTSubst s `M.union` getTSubst (subst s t)
   mempty        = TSubst $ M.empty
   
 data Env = Env { 
