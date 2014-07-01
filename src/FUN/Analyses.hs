@@ -53,7 +53,7 @@ type TVar = String
 --  holds flow variables to which Control Flow Constraints are attached during the
 --  execution of W. 
 data Type
-  = TVar  (Analysis TVar)
+  = TVar  TVar
   | TBool
   | TInt  Scale Base
   | TArr  Flow Type Type        -- Function Arrow
@@ -64,7 +64,7 @@ data Type
 
 data TypeScheme
   = Type Type
-  | Scheme [TVar] Type
+  | Scheme (Set TVar) Type
   --deriving (Eq, Ord)
 
 -- |Representation for possible errors in algorithm W.
@@ -78,25 +78,18 @@ data TypeError
  -- deriving Eq
 
 class FTV t where
-  ftv :: t -> Analysis [TVar]
+  ftv :: t -> [TVar]
   
   
 -- |Returns the set of free type variables in a type.
 instance FTV Type where 
-  ftv TBool           = return []
-  ftv (TInt _ _)      = return []
-  ftv (TVar  n)       = do n' <- n 
-                           return [n']
-  ftv (TArr  _   a b) = do a' <- ftv a
-                           b' <- ftv b
-                           return $ L.union a' b'
-  ftv (TProd _ _ a b) = do a' <- ftv a
-                           b' <- ftv b
-                           return $ L.union a' b'
-  ftv (TSum  _ _ a b) = do a' <- ftv a
-                           b' <- ftv b
-                           return $ L.union a' b'
-  ftv (TUnit _ _)     = return []
+  ftv TBool           = []
+  ftv (TInt _ _)      = []
+  ftv (TVar  n)     = [n]
+  ftv (TArr  _   a b) = L.union (ftv a) (ftv b)
+  ftv (TProd _ _ a b) = L.union (ftv a) (ftv b)
+  ftv (TSum  _ _ a b) = L.union (ftv a) (ftv b)
+  ftv (TUnit _ _)     = []
   
 -- |Returns the set of free type variables in a type.
 instance FTV TypeScheme where
@@ -148,6 +141,11 @@ x ~> t = \env -> env { typeMap = TSubst $ do m <- getTSubst . typeMap $ env
                                              return $ M.insert x (Type t) m  
                      }
 
+(~~>) :: TVar -> TypeScheme -> Env -> Env
+x ~~> t = \env -> env { typeMap = TSubst $ do m <- getTSubst . typeMap $ env
+                                              return $ M.insert x t m  
+                      }
+                     
                
 -- |The entrypoint to the analysis. Takes an untyped program as argument and returns either
 --   Right:
@@ -165,6 +163,8 @@ analyseProgram (Prog ds) =
   let analyseDecl :: (Env, Set Constraint) -> Decl-> Analysis (Env, Set Constraint)
       analyseDecl (env, c0) (Decl x e) = do (t1, s1, c1) <- analyse e $ env
 
+                                            t1 <- generalize mempty t1
+      
                                             m <- getTSubst . typeMap $ env
                                             -- |Prepare a new environment where all type checking history
                                             --  except for top level types is forgotten, but where annotation
@@ -174,7 +174,7 @@ analyseProgram (Prog ds) =
                                             riggedEnv <- sequenceMap . fmap (subst s2 . return) $ m
                                             
                                             return ( env { 
-                                                       typeMap = TSubst . return $ M.insert x (Type t1) $ riggedEnv 
+                                                       typeMap = TSubst . return $ M.insert x t1 $ riggedEnv 
                                                      } 
                                                    , subst s1 c0 `union` c1
                                                    )
@@ -213,11 +213,21 @@ analyseProgram (Prog ds) =
 instantiate :: TypeScheme -> Analysis Type
 instantiate (Type ty) = return ty 
 instantiate (Scheme bnds ty) = 
-  do r <- forM bnds $ \t -> 
+  do r <- forM (S.toList bnds) $ \t -> 
             do v <- fresh
                return (t, Type $ v)
      subst (TSubst $ return $ M.fromList r) (return ty)
-                                            
+          
+generalize :: Env -> Type -> Analysis TypeScheme
+generalize env ty = 
+  do let TSubst r = typeMap env
+     env <- r
+     let boundedVars   = M.keysSet env
+         freeVars      = S.fromList $ ftv ty
+         unboundedVars = freeVars S.\\ boundedVars
+     return $ Scheme unboundedVars ty
+
+          
 -- |Runs the Algorithm W inference for Types and generates constraints later used 
 --  by Control Flow analysis and Measure Analysis. The main part of the algorithm is 
 --  adapted from the book, extended in the obvious way to handle construction and
@@ -229,8 +239,8 @@ analyse exp env = case exp of
                             , empty
                             )
 
-  Var x           -> do f <- getTSubst (typeMap env)
-                        s <- (f $* x) $ throwError (UnboundVariable x)
+  Var x           -> do env <- getTSubst (typeMap env)
+                        s <- (env $* x) $ throwError (UnboundVariable x)
                         v <- instantiate s
                  
                         return ( v
@@ -286,8 +296,11 @@ analyse exp env = case exp of
                                )
                                
                                
-  Let x e1 e2     -> do (t1, s1, c1) <- analyse e1 $ env;
-                        (t2, s2, c2) <- analyse e2 . (x ~> t1) . subst s1 $ env
+  Let x e1 e2     -> do (t1, s1, c1) <- analyse e1 $ env
+  
+                        t1 <- generalize env t1
+                        
+                        (t2, s2, c2) <- analyse e2 . (x ~~> t1) . subst s1 $ env
 
                         return ( t2
                                , s2 <> s1
@@ -310,7 +323,9 @@ analyse exp env = case exp of
 
                         (    s4, c4) <- t1 `unify` t2;
 
-                        return ( undefined -- subst (s4 <> s3) t2
+                        t2 <- subst (s4 <> s3) (return t2)
+                        
+                        return ( t2 
                                , s4 <> s3 <> s2 <> s1
                                , subst (s4 <> s3 <> s2 <> s1) c0 `union`
                                  subst (s4 <> s3 <> s2)       c1 `union`
@@ -493,27 +508,21 @@ unify t1@(TUnit p1 n1) t2@(TUnit p2 n2)
                             return $ (mempty, c0)
                     else do throwError (CannotUnify t1 t2)
 
-unify (TVar n) t2@(TVar _) =
-  do t1 <- n
-     return $ (singleton (t1, t2), empty)
-unify t1 (TVar n) = 
-  do t2 <- n
-     occ <- t2 `occurs` t1
+unify (TVar t1) t2@(TVar _) = return $ (singleton (t1, t2), empty)
+unify t1 (TVar t2) = 
+  do occ <- t2 `occurs` t1
      if occ
         then throwError (OccursCheck t2 t1)
         else return $ (singleton (t2, t1), empty)
-unify (TVar n) t2 = 
-  do t1 <- n
-     occ <- t1 `occurs` t2
+unify (TVar t1) t2 = 
+  do occ <- t1 `occurs` t2
      if occ
         then throwError (OccursCheck t1 t2)
         else return $ (singleton (t1, t2), empty)
-        
+unify t1 t2 = throwError (CannotUnify t1 t2)
         
 occurs :: TVar -> Type -> Analysis Bool
-occurs n t = 
-  do tv <- ftv t
-     return $ n `elem` tv  
+occurs n t = return $ n `elem` ftv t 
 
         
 {-
@@ -558,8 +567,7 @@ refreshAll env = do (env, p, c) <- env;
                            -}
 -- |Replaces every type variable with a fresh one.
 refresh :: TypeScheme -> Analysis TypeScheme
-refresh t1 = do tvs <- ftv t1
-                subs <- forM tvs $ \a ->
+refresh t1 = do subs <- forM (ftv t1) $ \a ->
                           do b <- (fresh :: Analysis Type)
                              return $ singleton (a, Type b)
                 subst (mconcat subs :: Env) (return t1)
@@ -569,7 +577,7 @@ class Fresh t where
 
 instance Fresh Type where
   fresh = do n <- lift (lift supply)
-             return $ TVar $ return n
+             return $ TVar n
 
 instance Fresh Flow where
   fresh = fmap FVar $ lift supply
@@ -623,7 +631,7 @@ printProgram cp (Prog p) env =
   
 showScheme :: PrintAnnotations -> TypeScheme -> String
 showScheme ann (Type ty) = showType ann ty
-showScheme ann (Scheme bnds ty) = "forall " ++ (concat $ L.intersperse " " bnds) ++ " . " ++ showType ann ty
+showScheme ann (Scheme bnds ty) = "forall " ++ (concat . L.intersperse " " . S.toList $ bnds) ++ " . " ++ showType ann ty
 
 -- |Pretty print a given type. The PrintAnnotation parameter is used to find-tune
 --  the printing of type annotations.
@@ -654,7 +662,7 @@ showType cp =
                                              
                                              
                              else ""      
-        TVar n -> "<<Unification Variable>>"
+        TVar n -> n
         TArr  v a b -> printf "%s -%s> %s" (wrap a) (printAnn v) (wrap b) where
             wrap ty@(TArr _ _ _) = printf "(%s)" (showType ty)
             wrap ty              = showType ty
@@ -681,7 +689,7 @@ instance Show Type where
 
 instance Show TypeScheme where
   show (Type ty) = showType mempty ty
-  show (Scheme binders ty) = "forall " ++ (concat $ L.intersperse " " binders) ++ " . " ++ showType mempty ty
+  show (Scheme binders ty) = "forall " ++ (concat . L.intersperse " " . S.toList $ binders) ++ " . " ++ showType mempty ty
 
   
 instance Show TypeError where
@@ -854,11 +862,10 @@ data Env = Env {
   }
 
 instance Subst TSubst (Analysis Type) where 
-  subst m d = join $ fmap subst' d where 
+  subst m = join . fmap subst' where 
     subst' :: Type -> Analysis Type
-    subst' f@(TVar n) = do n' <- n
-                           m' <- getTSubst m
-                           instantiate (M.findWithDefault (Type f) n' m')
+    subst' f@(TVar n) = do m' <- getTSubst m
+                           instantiate (M.findWithDefault (Type f) n m')
     subst' r@ TBool     = return $ r
     subst' r@(TInt _ _) = return $ r
 
