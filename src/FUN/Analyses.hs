@@ -18,7 +18,6 @@ import Data.Functor ((<$>))
 import Control.Applicative ( Applicative (..) )
 import Data.Traversable ( sequenceA )
 
-
 import Control.Monad (foldM, join)
 import Control.Monad.Error 
   ( Error (..)
@@ -74,7 +73,7 @@ data TypeError
   | UnboundVariable TVar      -- ^ thrown when unknown variable is encountered
   | OccursCheck     TVar Type -- ^ thrown when occurs check in unify fails
   | CannotUnify     Type Type -- ^ thrown when types cannot be unified
-  | CannotUnifyMeasurement MeasurementError
+  | CannotUnifyMeasurement MeasureError
   | OtherError      String    -- ^ stores miscellaneous errors
  -- deriving Eq
 
@@ -146,8 +145,7 @@ x ~> t = \env -> env { typeMap = TSubst $ do m <- getTSubst . typeMap $ env
 x ~~> t = \env -> env { typeMap = TSubst $ do m <- getTSubst . typeMap $ env
                                               return $ M.insert x t m  
                       }
-                     
-               
+      
 -- |The entrypoint to the analysis. Takes an untyped program as argument and returns either
 --   Right:
 --    1) An environment containing the type substitution necessary to make the program well typed.
@@ -172,11 +170,9 @@ analyseProgram (Prog ds) =
                                             --  history is preserved
                                             let s2 = s1 { typeMap = mempty }
                                                 
-                                            riggedEnv <- sequenceMap . fmap (subst s2 . return) $ m
+                                            riggedEnv <- sequenceMap . fmap (substM s2) $ m
                                             
-                                            return ( env { 
-                                                       typeMap = TSubst . return $ M.insert x t1 $ riggedEnv 
-                                                     } 
+                                            return ( s2 { typeMap = TSubst . return $ M.insert x t1 $ riggedEnv } 
                                                    , subst s1 c0 `union` c1
                                                    )
 
@@ -192,21 +188,26 @@ analyseProgram (Prog ds) =
                                      --  below it via the invironment.
                                      (env, c0) <- foldM analyseDecl (env, empty) $ labeledDecls
                                      
+                                     let scales = scaleMap env
+                                     
                                      -- |Solve the various constraints
-                                     let (f_s1, f_c1) = solveConstraints . extractFlowConstraints $ c0
+                                     let (f_s1, f_c1) = solveConstraints (flowMap env). extractFlowConstraints $ c0
                                          c1 = S.map FlowConstraint f_c1                                        
                                          
-                                         (      s_c2) =                    extractScaleConstraints $ c0
+                                         (s_s2, s_c2) = solveConstraints (scaleMap env) . extractScaleConstraints $ c0
                                          c2 = S.map ScaleConstraint s_c2     
                                      
-                                         (b_s3, b_c3) = solveConstraints . extractBaseConstraints  $ c0
+                                         (b_s3, b_c3) = solveConstraints (baseMap env) . extractBaseConstraints  $ c0
                                          c3 = S.map BaseConstraint b_c3
                                          
-                                     finalEnv <- getTSubst (typeMap env) 
+                                     let finalEnv = subst b_s3 . subst s_s2  . subst f_s1 $ typeMap env
                                          
+                                     unwrappedEnv <- getTSubst finalEnv
+       
+ 
                                      -- |Return the refined environment, the input program together with prelude and
                                      --  a set of unsolved constraints.
-                                     return ( subst b_s3 {- . subst s_s2 -} . subst f_s1 $ finalEnv
+                                     return ( unwrappedEnv
                                             , Prog $ labeledLib ++ labeledDecls
                                             , c1 `union` c2 `union` c3
                                             )
@@ -228,7 +229,12 @@ generalize env ty =
          unboundedVars = freeVars S.\\ boundedVars
      return $ Scheme unboundedVars ty
 
-          
+     
+liftedUnify :: Scale -> Scale -> Analysis SSubst
+liftedUnify a b = lifter (unifyScales a b) where
+  lifter (Left err) = throwError (CannotUnifyMeasurement err)
+  lifter (Right r)  = return r
+     
 -- |Runs the Algorithm W inference for Types and generates constraints later used 
 --  by Control Flow analysis and Measure Analysis. The main part of the algorithm is 
 --  adapted from the book, extended in the obvious way to handle construction and
@@ -287,7 +293,7 @@ analyse exp env = case exp of
   App f e         -> do (t1, s1, c1) <- analyse f $ env
                         (t2, s2, c2) <- analyse e . subst s1 $ env
 
-                        a <- fresh;
+                        a <- fresh
                         b <- fresh
 
                         t1 <- substM s2 t1
@@ -296,7 +302,7 @@ analyse exp env = case exp of
 
                         a <- substM s3 a
                         
-                        return ( a
+                        return (  a
                                , s3 <> s2 <> s1
                                , subst (s3 <> s2) c1 `union`
                                  subst  s3        c2 `union`
@@ -456,17 +462,17 @@ analyse exp env = case exp of
 
                     (t3, s3, c3) <- analyse y . subst (s2 <> s1) $ env
                     (    s4, c4) <- t3 `unify` TInt ry by
-
+                    
                     rz <- fresh
                     bz <- fresh
-
+            
                     -- |Generate the Scale and Base constraints corresponding to the operations
                     let c0 = case op of
                           Add -> scaleEquality [rx, ry, rz]            `union` selectBase   (bx, by) bz
                           Sub -> scaleEquality [rx, ry, rz]            `union` preserveBase (bx, by) bz
                           Mul -> scaleEquality [rz, (SMul rx ry)]      `union` baseEquality [bx, by, bz, BNil]
                           Div -> scaleEquality [rz, SMul rx (SInv ry)] `union` baseEquality [bx, by, bz, BNil]
-
+                          
 
                     return ( TInt rz bz
                            , s4 <> s3 <> s2 <> s1
@@ -474,7 +480,7 @@ analyse exp env = case exp of
                              subst (s4 <> s3 <> s2)       c1 `union`
                              subst (s4 <> s3)             c2 `union`
                              subst  s4                    c3 `union`
-                                                          c4
+                             c4
                            )
 
 -- * Unifications
@@ -484,17 +490,14 @@ analyse exp env = case exp of
 --  failure paths are introduced compared to bare W unification.
 unify :: Type -> Type -> Analysis (Env, Set Constraint)
 unify TBool TBool = return $ mempty
-unify (TInt r1 b1) (TInt r2 b2) 
-                  = do let result = unifyScale r1 r2
-                       case result of
-                            Left err -> throwError (CannotUnifyMeasurement err)
-                            Right scaleSubst -> return (mempty { scaleMap = scaleSubst }, baseEquality [b1, b2])
+unify (TInt r1 b1) (TInt r2 b2) = return $ (mempty, baseEquality [b1, b2] `S.union` scaleEquality [r1, r2])
+                            
 unify (TArr p1 a1 b1) (TArr p2 a2 b2)
                   = do let c0 = flowEquality p1 p2
                        (s1, c1) <- a1 `unify` a2
-                       b1' <- subst s1 (return b1)
-                       b2' <- subst s1 (return b2)
-                       (s2, c2) <- b1' `unify` b2'
+                       b1 <- substM s1 b1
+                       b2 <- substM s1 b2
+                       (s2, c2) <- b1 `unify` b2
                        return (s2 <> s1, c0 `union` c1 `union` c2)
 unify t1@(TProd p1 n1 x1 y1) t2@(TProd p2 n2 x2 y2)
                   = if n1 == n2
@@ -521,34 +524,14 @@ unify t1@(TUnit p1 n1) t2@(TUnit p2 n2)
                     else do throwError (CannotUnify t1 t2)
 
 unify (TVar t1) t2@(TVar _) = return $ (singleton (t1, t2), empty)
-unify t1 (TVar t2) = 
-  do occ <- t2 `occurs` t1
-     if occ
-        then throwError (OccursCheck t2 t1)
-        else return $ (singleton (t2, t1), empty)
-unify (TVar t1) t2 = 
-  do occ <- t1 `occurs` t2
-     if occ
-        then throwError (OccursCheck t1 t2)
-        else return $ (singleton (t1, t2), empty)
+unify t1 (TVar t2) | t2 `occurs` t1 = throwError (OccursCheck t2 t1)
+                   | otherwise      = return $ (singleton (t2, t1), empty)
+unify (TVar t1) t2 | t1 `occurs` t2 = throwError (OccursCheck t1 t2)
+                   | otherwise      = return $ (singleton (t1, t2), empty)
 unify t1 t2 = throwError (CannotUnify t1 t2)
         
-occurs :: TVar -> Type -> Analysis Bool
-occurs n t = return $ n `elem` ftv t 
-
-        
-{-
-unify t1 t2@(TVar n)
-  | n `occurs` t1 && t1 /= t2 = throwError (OccursCheck n t1)
-  | otherwise                 = return $ (singleton (n, t1), empty)
-unify t1@(TVar n) t2
-  | n `occurs` t2 && t1 /= t2 = throwError (OccursCheck n t2)
-  | otherwise                 = return $ (singleton (n, t2), empty)
-unify t1 t2                   = throwError (CannotUnify t1 t2)
--}
--- |Occurs check for Robinson's unification algorithm.
---occurs :: TVar -> Type -> Bool
---occurs n t = n `elem` (ftv t)   
+occurs :: TVar -> Type -> Bool
+occurs n t = n `elem` ftv t 
 
                            
 -- * Fresh Names
@@ -667,7 +650,7 @@ showType cp =
                                   if b == BNil
                                      then case s of
                                              SVar p -> "{" ++ p ++ "}"
-                                             _      -> "[" ++ show s ++ "]"
+                                             _      -> "[" ++ show (simplify s) ++ "]"
                                      else case (s, b) of
                                              (SVar p, BVar q) -> "{" ++ p ++ "@" ++ q ++ "}"
                                              (SVar p,      _) -> "{" ++ p ++ "}@[" ++ show b ++ "]"
@@ -956,12 +939,13 @@ instance Subst BSubst Env where
 instance Monoid Env where                    
   -- |Substitutions can be chained by first recursively substituting the left substitution
   --  over the right environment then unioning with the left invironment
-  p `mappend` q = Env { 
-    typeMap  = typeMap  p <> typeMap  q,
-    flowMap  = flowMap  p <> flowMap  q,
-    scaleMap = scaleMap p <> scaleMap q,
-    baseMap  = baseMap  p <> baseMap  q
-  }
+  p `mappend` q = 
+    let env = Env { 
+      typeMap  = typeMap  p <> typeMap  q,
+      flowMap  = flowMap  p <> flowMap  q,
+      scaleMap = scaleMap p <> scaleMap q,
+      baseMap  = baseMap  p <> baseMap  q
+    } in env
       
   mempty = Env { 
     typeMap  = mempty, 

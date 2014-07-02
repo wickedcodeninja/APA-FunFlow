@@ -48,22 +48,198 @@ instance Show Scale where
   show (SVar v)           = v
   show (SCon c)           = c 
                                               
-  show (SMul SNil b)      = show b
+  --show (SMul SNil b)      = show b
   show (SMul a (SInv b))  = "(" ++ show a ++ "/" ++ show b ++ ")"
   show (SMul (SInv a) b)  = "(" ++ show b ++ "/" ++ show a ++ ")"
   show (SMul a b)         = "(" ++ show a ++ "*" ++ show b ++ ")"
   show (SInv a)           = "(1/" ++ show a ++ ")"
    
-data MeasurementError = EmptyError
-   deriving Show
-   
-unifyScale :: Scale -> Scale -> Either MeasurementError SSubst
-unifyScale p q = unifyOne $ SMul p (SInv q)
+data MeasureError = MeasuresDontUnify String
+
+instance Show MeasureError where
+  show (MeasuresDontUnify str) = str
+
+ 
+throwMeasureError :: MeasureError -> Either MeasureError SSubst
+throwMeasureError = Left
+ 
+unifyScales :: Scale -> Scale -> Either MeasureError SSubst
+unifyScales p q = unifyOne $ SMul p (SInv q)
   
-unifyOne :: Scale -> Either MeasurementError SSubst
-unifyOne p = Right mempty
-   
-   
+data Term = Variable SVar | Concrete SCon
+  deriving (Eq, Show)
+  
+instance Ord Term where
+  Variable _ `compare` Concrete _ = LT
+  Concrete _ `compare` Variable _ = GT
+  Variable p `compare` Variable q = p `compare` q
+  Concrete p `compare` Concrete q = p `compare` q
+  
+linearize :: Scale -> Map Term Integer
+linearize = M.filter (/= 0) . linearize' where
+  linearize' SNil = mempty
+  linearize' (SVar v) = M.fromList [(Variable v, 1)]
+  linearize' (SCon c) = M.fromList [(Concrete c, 1)]
+  linearize' (SMul a b) = M.unionWith (+) (linearize a) (linearize b)
+  linearize' (SInv s) = M.map negate (linearize s)
+
+reconstruct :: Map Term Integer -> Scale
+reconstruct = fixer . M.toList where
+  noob (Variable v, k) = case k `compare` 0 of
+                              GT -> genericReplicate k (SVar v)
+                              EQ -> []
+                              LT -> genericReplicate (negate k) (SInv $ SVar v)
+  noob (Concrete c, k) = case k `compare` 0 of
+                              GT -> genericReplicate k (SCon c)
+                              EQ -> []
+                              LT -> genericReplicate (negate k) (SInv $ SCon c)
+  
+  fixer [] = SNil
+  fixer xs = foldr1 SMul (xs >>= noob)
+  
+reconstruct' :: ([(SVar, Integer)], [(SCon, Integer)]) -> Scale
+reconstruct' (varList, conList) = reconstruct (varList' `M.union` conList') where
+  varList' = M.fromList $ map (\(a, k) -> (Variable a, k)) varList
+  conList' = M.fromList $ map (\(c, k) -> (Concrete c, k)) conList
+  
+ 
+  
+collect :: Scale -> [Term]
+collect SNil = []
+collect (SVar a) = [Variable a]
+collect (SCon c) = [Concrete c]
+collect (SMul a b) = collect a ++ collect b
+collect (SInv a) = collect a      
+  
+simplify :: Scale -> Scale
+simplify = reconstruct . linearize
+  
+normalize :: Scale -> ([Either SVar (SVar, Integer)], [(SCon, Integer)])
+normalize s = (varList, conList) where
+  sortedList = sort (nub $ collect s)
+  varList = sortedList >>= \g -> case g of  
+                                        Variable v -> let k = expScale s $ Variable v
+                                                      in if k /= 0 
+                                                            then [Right(v, k)]
+                                                            else [Left v]
+                                        Concrete _ -> []
+  conList = sortedList >>= \g -> case g of  
+                                        Concrete c -> let k = expScale s $ Concrete c
+                                                      in if k /= 0 
+                                                            then [(c, k)]
+                                                            else []
+                                        Variable _ -> []
+
+                                   
+scalify :: (String -> Scale) -> [(String, Integer)] -> Scale
+scalify maker = flip foldr SNil $ \(v, k) xs ->
+  case k `compare` 0 of
+       GT -> SMul xs $ foldr1 SMul $ L.genericReplicate k (maker v)
+       EQ -> xs
+       LT -> SMul xs $ foldr1 SMul $ L.genericReplicate (negate k) (SInv (maker v))
+
+expScale :: Scale -> Term -> Integer
+expScale SNil       w = 0
+expScale (SMul a b) w = expScale a w + expScale b w
+expScale (SInv u)   w = negate (expScale u w)
+expScale (SVar a)   (Variable w) = if a == w then 1 else 0
+expScale (SVar a)   (Concrete w) = 0
+expScale (SCon c)   (Variable w) = 0
+expScale (SCon c)   (Concrete w) = if c == w then 1 else 0
+
+       
+unifyOne :: Scale -> Either MeasureError SSubst
+unifyOne p =
+  do let p'@(mixedVars, normCons) = normalize p
+
+     let normVars = mixedVars >>= fixer where
+           fixer (Left err) = []
+           fixer (Right a)  = [a]
+  
+         badVars = mixedVars >>= fixer where
+           fixer (Left a) = [(a, SNil)]
+           fixer (Right a)  = []
+         s0 = SSubst $ M.fromList badVars
+     case (normVars, normCons) of
+        ([]      , []) -> return mempty
+        ([]      , rest) -> throwMeasureError $ MeasuresDontUnify $ "Can't solve equality " ++ show (reconstruct' ([], rest)) ++ " ~ " ++ "1"
+        ([(v, x)], rest) -> let dividesThemAll = and . map (\(c, k) -> k `rem` x == 0) $ normCons
+                            in if dividesThemAll
+                                 then return $ singleton (v, scalify SCon . map (\(c, k) -> (c, negate $ k `div` x) ) $ normCons)
+                                 else throwMeasureError $ MeasuresDontUnify $ "Equation not congruent. Equality " ++ show p ++ " ~ " ++ "1 not solvable"
+        ((v, x):vs, cs) -> do let s1v = map (\(c, k) -> (Variable c, negate $ k `div` x) ) $ vs
+                                  s1c = map (\(c, k) -> (Concrete c, negate $ k `div` x) ) $ cs
+                                  s1t = M.fromList $ [(Variable v, 1)] ++ s1v ++ s1c
+                                  s1 =  singleton $ (v, reconstruct s1t)
+                                  reduced = (subst s1 p)
+                              s2 <- unifyOne reduced
+                              return $ s2 <> s1
+       
+instance Solver ScaleConstraint SSubst where
+  solveConstraints = solveScaleConstraints
+       
+pick :: Int -> [a] -> [[a]]
+pick 0 _ = [[]]
+pick _ [] = []
+pick n (x : xs) = map (x :) (pick (n - 1) xs) ++ pick n xs
+     
+
+setJoin :: Ord a => Set (Set a) -> Set a
+setJoin = (>>~ id)
+         
+solveScaleConstraints :: SSubst -> Set ScaleConstraint -> (SSubst, Set ScaleConstraint)
+solveScaleConstraints s0 c0 = 
+  let binaryPairs    = S.toList . setJoin . S.map (\(ScaleEquality r) -> S.fromList . map (\[a, b] -> (a, b)) . pick 2 . S.toList $ r) $ c0
+      singletonPairs = S.toList . setJoin . flip S.map c0 $ \(ScaleEquality r) -> if S.size r == 1 
+                                                                            then case S.toList r of 
+                                                                                      [x] -> S.singleton (x, SNil)
+                                                  
+                                                                            else S.empty
+      
+      loop :: SSubst -> [(Scale, Scale)] -> (SSubst, [Either (MeasureError, (Scale, Scale)) (Scale, Scale)])
+      loop s0 [] = (s0, [])
+      loop s0 (r@(a, b) : xs) = case unifyScales (subst s0 a) (subst s0 b) of
+                                  Left err -> case loop s0 xs of
+                                                   (sX, rest) -> (sX, (Left (err, r) ) : rest)
+                                  Right s1 -> case loop (s1 <> s0) xs of 
+                                                   (sX, rest) -> (sX, (Right $ apply s1 r) : rest) 
+        where
+                                    apply s (a, b) = (subst s a, subst s b)
+      
+      (s1, flattenedPairs) = loop s0 (binaryPairs) 
+      
+      errorPairs = flattenedPairs >>= filter where -- ignore for now..
+        filter (Left (err, r)) = [r]
+        filter (Right r)  = []
+      goodPairs = flattenedPairs >>= filter where
+        filter (Left err) = []
+        filter (Right r)  = [r]
+        
+      order (SVar a, b) = [(a, b)]
+      order (a, SVar b) = [(b, a)]
+      order x@(a, b) = [ ]
+      
+      s2 = SSubst $ M.fromList . concatMap (order) $ goodPairs
+  
+      totalSub = s2 <> s1 <> s0
+  
+      maker (ScaleEquality r) = 
+        let simplified = S.map (simplify) r
+            isTrivial [ ] = True  -- Empty constraint set
+            isTrivial [r] = True  -- Single constraint, corresponding to identities p == p
+            isTrivial _   = False -- Non-trivial equality
+            
+        in if isTrivial (S.toList simplified)
+              then S.empty
+              else S.singleton $ ScaleEquality $ simplified
+
+              
+  
+      c1 = (subst totalSub c0) >>~ maker
+          
+          
+  in (totalSub, c1)
+       
 instance Show Base where
   show BNil     = "None"
   show (BVar v) = "[" ++ v ++ "]"
@@ -103,8 +279,8 @@ iterationCount :: Int
 iterationCount = 8
                               
 -- |Solve Base constraints. The equality case is the same as in the Scale case.
-solveBaseConstraints :: Set BaseConstraint -> (BSubst, Set BaseConstraint)
-solveBaseConstraints = loop iterationCount mempty where
+solveBaseConstraints :: BSubst -> Set BaseConstraint -> (BSubst, Set BaseConstraint)
+solveBaseConstraints _ = loop iterationCount mempty where
   loop 0 s0 c0 = (s0, removeSolved c0)
   loop n s0 c0 = 
     let (s1, c1) = solveBaseEquality . unionMap unpackEquality $ c0
@@ -259,7 +435,8 @@ instance Subst SSubst Scale where
   subst m v@_          = v
    
 instance Monoid SSubst where
-  s `mappend` t = SSubst $ getSSubst (subst s t) `M.union` getSSubst s 
+  s `mappend` t = SSubst $ let r = getSSubst (subst s t) `M.union` getSSubst s
+                           in M.map simplify r
   mempty        = SSubst $ M.empty
                 
 instance Singleton SSubst (SVar,Scale) where

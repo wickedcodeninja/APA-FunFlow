@@ -15,7 +15,7 @@ import qualified Data.Set as S
 -- * Constraint Solving
 
 class Solver c s | c -> s where
-  solveConstraints :: Set c -> (s, Set c)
+  solveConstraints :: s -> Set c -> (s, Set c)
 
   
 -- * Substitutions

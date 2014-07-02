@@ -41,8 +41,8 @@ data FlowConstraint
 --  obtain a mapping from Flow variables to sets of Program Points. Each flow variable is
 --  associated to a specific type that can occur multiple times in the program and each
 --  set constains program points that can reach this type.
-solveFlowConstraints :: Set FlowConstraint -> (FSubst, Set FlowConstraint)
-solveFlowConstraints c0 =
+solveFlowConstraints :: FSubst -> Set FlowConstraint -> (FSubst, Set FlowConstraint)
+solveFlowConstraints s0 c0 =
   let (equalities, programPoints, vars, c1) = info where
         info :: (Set (FVar, FVar), [(Label, Set FVar)], Set FVar, Set FlowConstraint)
         info = flip F.foldMap c0 $ \r@(FlowEquality a b) -> 
@@ -85,7 +85,8 @@ solveFlowConstraints c0 =
                                                                     else Just a
                             
       subst = filterUnreachable . flip M.fromSet vars $ \v -> FSet $ findLabels v 
-  in (FSubst subst, c1) 
+          in (FSubst subst <> s0, c1)
+  
 instance Solver FlowConstraint FSubst where
   solveConstraints = solveFlowConstraints
     
@@ -131,7 +132,6 @@ instance Subst FSubst FSubst where
  
 instance Monoid FSubst where
   s `mappend` t = FSubst $ getFSubst (subst s t) `M.union` getFSubst s
-  --s `mappend` t = FSubst $ let m = subst s t in getFSubst (subst m s) `M.union` getFSubst m      
   mempty        = FSubst $ mempty
   
 instance Singleton FSubst (FVar, Flow) where
