@@ -71,9 +71,10 @@ example = Prog $ case 1 of
                    4 -> exLoop False    -- ^ Loop program from the book, in original presentation. Only the toplevel 
                                         -- ^   type is displayed, so intermediate results cannot be checked
                    5 -> exKnor          -- ^ Still no subeffecting :(
-                   6 -> exBad
+                   6 -> exBad           -- ^ Not bad anymore!
+                   
 exLetGen = fmap parseDecl $ 
-  [ "f x y = let r a = a; s x = x in Pair (r (s x), s (r y))"
+  [ "f x y = let r a = a; Pair (r x, s y)"
                  
   , "g x y = f (f x y) (f y x)"
   ]

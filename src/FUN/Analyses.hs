@@ -95,7 +95,7 @@ instance FTV Type where
 -- |Returns the set of free type variables in a type.
 instance FTV TypeScheme where
   ftv (Type ty) = ftv ty
-  ftv (Scheme bnds ty) = return [] --TODO: CHECK
+  ftv (Scheme bnds ty) = S.toList $ S.fromList (ftv ty) S.\\ bnds
   
 -- |Extract the type from primitive literals.
 typeOf :: Lit -> Type
@@ -159,59 +159,47 @@ x ~~> t = \env -> env { typeMap = TSubst $ do m <- getTSubst . typeMap $ env
 --  fail, although there may be unresolved constraints that are either inconsistent or just not fully
 --  handled yet. 
 analyseProgram :: Program -> Either TypeError (Map TVar TypeScheme, Program, Set Constraint)
-analyseProgram (Prog ds) =
-  let analyseDecl :: (Env, Set Constraint) -> Decl-> Analysis (Env, Set Constraint)
-      analyseDecl (env, c0) (Decl x e) = do (t1, s1, c1) <- analyse e $ env
+analyseProgram (Prog ds) = withFreshVars $
+  do -- |Initialize pre-typed prelude for standard measurement functions
+    (preludeEnv, lib) <- prelude
 
-                                            t1 <- generalize mempty t1
-      
-                                            m <- getTSubst . typeMap $ env
-                                            -- |Prepare a new environment where all type checking history
-                                            --  except for top level types is forgotten, but where annotation
-                                            --  history is preserved
-                                            let s2 = s1 { typeMap = mempty }
-                                                
-                                            riggedEnv <- sequenceMap . fmap (substM s2) $ m
-                                            
-                                            return ( s2 { typeMap = TSubst . return $ M.insert x t1 $ riggedEnv } 
-                                                   , subst s1 c0 `union` c1
-                                                   )
+    -- |Label both the incoming program and the prelude with program points
+    let (labeledLib, labeledDecls) = runLabel $ (lib, ds)
 
-  in withFreshVars $
-                                  do -- |Initialize pre-typed prelude for standard measurement functions
-                                     (env, lib) <- prelude
+    -- |Run W on each of the top level Decls of the Program, chaining the 
+    --  results together, making the type of each Decl available to the Decls
+    --  below it via the invironment.
+        unpackedDecls = map (\(Decl nm e) -> (nm, e)) labeledDecls
+    
+        letBound = Let unpackedDecls (Lit . Bool $ False) 
+    
+    (_, checkedEnv, c0) <- analyse Global letBound $ preludeEnv
+    
+    let env = checkedEnv <> preludeEnv 
+    
+        scales = scaleMap env
+    
+    -- |Solve the various constraints
+    let (f_s1, f_c1) = solveConstraints (flowMap env). extractFlowConstraints $ c0
+        c1 = S.map FlowConstraint f_c1                                        
+        
+        (s_s2, s_c2) = solveConstraints (scaleMap env) . extractScaleConstraints $ c0
+        c2 = S.map ScaleConstraint s_c2     
+    
+        (b_s3, b_c3) = solveConstraints (baseMap env) . extractBaseConstraints  $ c0
+        c3 = S.map BaseConstraint b_c3
+        
+        finalEnv = subst b_s3 . subst s_s2  . subst f_s1 $ typeMap env
+        
+    unwrappedEnv <- getTSubst finalEnv
 
-                                     -- |Label both the incoming program and the prelude with program points
-                                     let (labeledLib, labeledDecls) = runLabel $ (lib, ds)
 
-                                     -- |Run W on each of the top level Decls of the Program, chaining the 
-                                     --  results together, making the type of each Decl available to the Decls
-                                     --  below it via the invironment.
-                                     (env, c0) <- foldM analyseDecl (env, empty) $ labeledDecls
-                                     
-                                     let scales = scaleMap env
-                                     
-                                     -- |Solve the various constraints
-                                     let (f_s1, f_c1) = solveConstraints (flowMap env). extractFlowConstraints $ c0
-                                         c1 = S.map FlowConstraint f_c1                                        
-                                         
-                                         (s_s2, s_c2) = solveConstraints (scaleMap env) . extractScaleConstraints $ c0
-                                         c2 = S.map ScaleConstraint s_c2     
-                                     
-                                         (b_s3, b_c3) = solveConstraints (baseMap env) . extractBaseConstraints  $ c0
-                                         c3 = S.map BaseConstraint b_c3
-                                         
-                                     let finalEnv = subst b_s3 . subst s_s2  . subst f_s1 $ typeMap env
-                                         
-                                     unwrappedEnv <- getTSubst finalEnv
-       
- 
-                                     -- |Return the refined environment, the input program together with prelude and
-                                     --  a set of unsolved constraints.
-                                     return ( unwrappedEnv
-                                            , Prog $ labeledLib ++ labeledDecls
-                                            , c1 `union` c2 `union` c3
-                                            )
+    -- |Return the refined environment, the input program together with prelude and
+    --  a set of unsolved constraints.
+    return ( unwrappedEnv
+           , Prog $ labeledLib ++ labeledDecls
+           , c1 `union` c2 `union` c3
+           )
 
 instantiate :: TypeScheme -> Analysis Type
 instantiate (Type ty) = return ty 
@@ -240,12 +228,18 @@ capture :: Type -> Env -> Env
 capture r@(TVar nm) = nm ~> r
 capture _ = error $ "capture: not implemented."
 
+-- |Decides weither Lets should be interpreted as local declarations belonging to a function
+--  or as a list of top-level declarations.
+data ExportType 
+  = Local 
+  | Global 
+
 -- |Runs the Algorithm W inference for Types and generates constraints later used 
 --  by Control Flow analysis and Measure Analysis. The main part of the algorithm is 
 --  adapted from the book, extended in the obvious way to handle construction and
 --  destruction of sum and product types.
-analyse :: Expr -> Env -> Analysis (Type, Env, Set Constraint)
-analyse exp env = case exp of
+analyse :: ExportType -> Expr -> Env -> Analysis (Type, Env, Set Constraint)
+analyse export exp env = case exp of
   Lit l           -> return ( typeOf l
                             , mempty
                             , empty
@@ -263,7 +257,7 @@ analyse exp env = case exp of
   Abs pi x e      -> do a_x <- fresh
                         b_0 <- fresh
 
-                        (t0, s0, c0) <- analyse e . (x ~> a_x) . (capture a_x) $ env
+                        (t0, s0, c0) <- analyse export e . (x ~> a_x) . (capture a_x) $ env
                         
                         a_x <- substM s0 a_x
                         
@@ -276,7 +270,7 @@ analyse exp env = case exp of
                         a_0 <- fresh
                         b_0 <- fresh
 
-                        (t0, s0, c0) <- analyse e . (f ~> TArr b_0 a_x a_0) . (x ~> a_x) . (capture a_x) $ env
+                        (t0, s0, c0) <- analyse export e . (f ~> TArr b_0 a_x a_0) . (x ~> a_x) . (capture a_x) $ env
                         
                         a_0 <- substM s0 a_0
                         
@@ -294,8 +288,8 @@ analyse exp env = case exp of
                                )
 
 
-  App f e         -> do (t1, s1, c1) <- analyse f $ env
-                        (t2, s2, c2) <- analyse e . subst s1 $ env
+  App f e         -> do (t1, s1, c1) <- analyse export f $ env
+                        (t2, s2, c2) <- analyse export e . subst s1 $ env
 
                         a <- fresh
                         b <- fresh
@@ -315,7 +309,7 @@ analyse exp env = case exp of
 
                                
   Let es e2    -> do let es' = flip fmap es $ \(x, e1) -> \env ->
-                                 do (t1, s1, c1) <- analyse e1 $ env
+                                 do (t1, s1, c1) <- analyse Local e1 $ env
     
                                     t1 <- generalize env t1
                                     let s1' = s1 { typeMap = singleton (x, t1) }
@@ -331,19 +325,24 @@ analyse exp env = case exp of
                      let shadowedEnv = env { typeMap = TSubst $ do env <- getTSubst . typeMap $ env
                                                                    s1  <- getTSubst . typeMap $ s1
                                                                    return  $ s1 `M.union` env
-                                       } -- the union prefers types from local environment
-                     (t2, s2, c2) <- analyse e2 $ shadowedEnv
+                                       }
+                                       
+                     (t2, s2, c2) <- analyse Local e2 $ shadowedEnv
 
+                     let finalSubst = case export of
+                                        Local  -> s2
+                                        Global -> s1
+                     
                      return ( t2
-                            , s2 -- NOTE: the substitutions obtained in s1 are only local to the let binding and should not be returned
+                            , finalSubst
                             , subst s2 c1 `union` c2
                             )
 
   -- |If-Then-Else
 
-  ITE b e1 e2     -> do (t0, s0, c0) <- analyse b $ env;
-                        (t1, s1, c1) <- analyse e1 . subst s0 $ env
-                        (t2, s2, c2) <- analyse e2 . subst (s1 <> s0) $ env
+  ITE b e1 e2     -> do (t0, s0, c0) <- analyse export b $ env;
+                        (t1, s1, c1) <- analyse export e1 . subst s0 $ env
+                        (t2, s2, c2) <- analyse export e2 . subst (s1 <> s0) $ env
 
                         t0 <- substM (s2 <> s1) t0
                         
@@ -373,8 +372,8 @@ analyse exp env = case exp of
                                       , simpleFlow b_0 pi
                                       )
   -- |Product Constructor                                      
-  Con pi nm (Prod x y)   -> do (t1, s1, c1) <- analyse x $ env
-                               (t2, s2, c2) <- analyse y . subst s1 $ env
+  Con pi nm (Prod x y)   -> do (t1, s1, c1) <- analyse export x $ env
+                               (t2, s2, c2) <- analyse export y . subst s1 $ env
 
                                b_0 <- fresh
 
@@ -386,7 +385,7 @@ analyse exp env = case exp of
                                                  c2 `union` simpleFlow b_0 pi
                                       )
   -- |Left Sum Constructor                                      
-  Con pi nm (Sum L t)   -> do (t1, s1, c1) <- analyse t $ env
+  Con pi nm (Sum L t)   -> do (t1, s1, c1) <- analyse export t $ env
                               t2 <- fresh
 
                               b_0 <- fresh
@@ -396,7 +395,7 @@ analyse exp env = case exp of
                                       , c1 `union` simpleFlow b_0 pi
                                       )
   -- |Right Sum Constructor                                      
-  Con pi nm (Sum R t)   -> do (t2, s1, c1) <- analyse t $ env
+  Con pi nm (Sum R t)   -> do (t2, s1, c1) <- analyse export t $ env
                               t1 <- fresh
 
                               b_0 <- fresh
@@ -407,13 +406,13 @@ analyse exp env = case exp of
                                       )
 
   -- |Unit Destruction                                                                            
-  Des nm e1 (UnUnit e2)     -> do (t1, s1, c1) <- analyse e1 $ env
+  Des nm e1 (UnUnit e2)     -> do (t1, s1, c1) <- analyse export e1 $ env
 
                                   b_0 <- fresh
 
                                   (    s2, c2) <- t1 `unify` TUnit b_0 nm
 
-                                  (t3, s3, c3) <- analyse e2 . subst (s2 <> s1) $ env
+                                  (t3, s3, c3) <- analyse export e2 . subst (s2 <> s1) $ env
 
                                   return ( t3
                                          , s3 <> s2 <> s1
@@ -422,7 +421,7 @@ analyse exp env = case exp of
                                                             c3
                                          )
   -- |Product Destruction
-  Des nm e1 (UnProd x y e2)   -> do (t1, s1, c1) <- analyse e1 $ env
+  Des nm e1 (UnProd x y e2)   -> do (t1, s1, c1) <- analyse export e1 $ env
 
                                     a_x <- fresh
                                     a_y <- fresh
@@ -430,7 +429,7 @@ analyse exp env = case exp of
                                     b_0 <- fresh
 
                                     (    s2, c2) <- t1 `unify` TProd b_0 nm a_x a_y
-                                    (t3, s3, c3) <- analyse e2 . (y ~> a_y) . (x ~> a_x) . subst (s2 <> s1) $ env
+                                    (t3, s3, c3) <- analyse export e2 . (y ~> a_y) . (x ~> a_x) . subst (s2 <> s1) $ env
 
                                     return ( t3
                                            , s3 <> s2 <> s1
@@ -440,7 +439,7 @@ analyse exp env = case exp of
                                            )
 
   -- |Sum Destruction                                           
-  Des nm e1 (UnSum (x, ex) (y, ey))     -> do (t1, s1, c1) <- analyse e1 $ env
+  Des nm e1 (UnSum (x, ex) (y, ey))     -> do (t1, s1, c1) <- analyse export e1 $ env
 
                                               a_x <- fresh
                                               a_y <- fresh
@@ -449,8 +448,8 @@ analyse exp env = case exp of
 
                                               (    s2, c2) <- t1 `unify` TSum b_0 nm a_x a_y
 
-                                              (tx, s3, c3) <- analyse ex . (x ~> a_x) . subst (s2 <> s1) $ env
-                                              (ty, s4, c4) <- analyse ey . (y ~> a_y) . subst (s3 <> s2 <> s1) $ env
+                                              (tx, s3, c3) <- analyse export ex . (x ~> a_x) . subst (s2 <> s1) $ env
+                                              (ty, s4, c4) <- analyse export ey . (y ~> a_y) . subst (s3 <> s2 <> s1) $ env
 
                                               (    s5, c5) <- tx `unify` ty
 
@@ -473,11 +472,11 @@ analyse exp env = case exp of
                     ry <- fresh
                     by <- fresh
 
-                    (t1, s1, c1) <- analyse x $ env
+                    (t1, s1, c1) <- analyse export x $ env
                     (    s2, c2) <- t1 `unify` TInt rx bx
 
 
-                    (t3, s3, c3) <- analyse y . subst (s2 <> s1) $ env
+                    (t3, s3, c3) <- analyse export y . subst (s2 <> s1) $ env
                     (    s4, c4) <- t3 `unify` TInt ry by
                     
                     rz <- fresh
