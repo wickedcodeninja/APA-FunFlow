@@ -11,15 +11,8 @@ functional programming language:
  - Units of Measure Analysis
  
 The main language is based on the Fun language introduced in the book by Henkin et al. It has polymorphic
-types, Sums and Pairs and Let is generalized. Unfortunately, I found out only last minute that let 
-generalisation has a serious bug: 
+types, Sums and Pairs and Let is generalized.
 
-The function `test f = let p = f in p` is given the totally wrong type `test :: forall a b . a -> b`.
-Fortunately, the example programs supplied to test the analysis' don't make use of let bindings and are
-thus reliable.
-
-
- 
 For Control Flow Analysis (CFA) we have extended the basic syntax of the FUN language 
 to support the construction en destruction of binary Sums and Products. These kind of 
 types can be named by the programmer and for CFA their creation points will be tracked.
@@ -43,7 +36,6 @@ are solved. The type inference is done by an our own implementation of algorithm
    the algorithm didn't error out on.
   -UMA is only monovariant
   -Control Flow Analysis doesn't have subeffecting or polyvariance, but is otherwise fully functional
-  -Let bindings are completely broken :(
 
 
 ## Program Input / Output
@@ -82,7 +74,7 @@ generating the unique Program Points used in Control Flow Analysis.
 
   `type Analysis a = ErrorT TypeError (SupplyT FVar (Supply TVar)) a`
 
-  Our W algorothm lives in this Monad. ErrorT is used to report error messages 
+  Our W algorithm lives in this Monad. ErrorT is used to report error messages 
 during unification and the two Supplies are used to have fresh streams of both
 type and annotation variables.
 

@@ -63,7 +63,7 @@ main =
 -- * Example code
   
 -- |Selected Examples to show our code in action
-example = Prog $ case 1 of
+example = Prog $ case 2 of
                    0 -> exLetGen        -- ^ Let is generalized
                    1 -> exMeasure       -- ^ Main program showing our 'units of measure' capabilities
                    2 -> exEverything    -- ^ A whole bunch of random snippets, showing our language and program point tracking
