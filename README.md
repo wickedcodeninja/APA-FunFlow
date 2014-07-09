@@ -2,8 +2,6 @@
 
 *An implementation of Control-Flow and Units of Measure Analysis for a Simple Functional Programming Language by Wout Elsinghorst and Pepijn Kokke.*
 
-[![Build Status](https://travis-ci.org/pepijnkokke/FunFlow.png?branch=master)](https://travis-ci.org/pepijnkokke/FunFlow)
-
 ## Description
 
 For this assignment we've implemented the following two analyses for a basic 
@@ -12,35 +10,46 @@ functional programming language:
  - Control Flow Analysis
  - Units of Measure Analysis
  
+The main language is based on the Fun language introduced in the book by Henkin et al. It has polymorphic
+types, Sums and Pairs and Let is generalized. Unfortunately, I found out only last minute that let 
+generalisation has a serious bug: 
+
+The function `test f = let p = f in p` is given the totally wrong type `test :: forall a b . a -> b`.
+Fortunately, the example programs supplied to test the analysis' don't make use of let bindings and are
+thus reliable.
+
+
+ 
 For Control Flow Analysis (CFA) we have extended the basic syntax of the FUN language 
 to support the construction en destruction of binary Sums and Products. These kind of 
-types can be named by the programmer and for CFA their creation points will be tracked. 
+types can be named by the programmer and for CFA their creation points will be tracked.
+The analysis has no subeffecting and is monovariant.
 
 The Units of Measure Analysis (UMA) exposes a few new builtin functions to the programmer to
 allow him to instantiate integer terms with certain measurement unit type annotations. 
 These annotations are propagated and combined during type inference to aid the programmer
-in writing unit-correct programs. 
+in writing unit-correct programs. This analysis is also monovariant. The implementation of
+UMA is based on the paper "Types for Units-of-Measure: Theory and Practice" by Andrew Kennedy.
+The type rules can be found in said paper.
 
 The implementation of these analyses follows a two stage approach. In the first stage
 types are inferred and constraints are generated while in the second stage the constraints
 are solved. The type inference is done by an our own implementation of algorithm W.
 
-The UMA has some none-trivial constraint solving code. The commutativity of unit 
-multiplication makes it impossible to just linearly follow the constraints. Our 
-implementation interleaves straightforward annotation unification with annotation
-rewriting. The rewriting aims put the annotations into a normal form that can then be 
-fully unified. Unfortunately, this rewriting is not fully complete and it will probably 
-leave some of the more advanced annotations stuck. Luckily, it's not completely trivial to
-trigger the generation of unsolvable constraints, and even then, the unsolved constraints
-are usually descriptive enough to allow the programmer to manually judge the unit correctness
-of his or her program.
+## Feature Completeness
+  -The main language is Let polymorphic and supports Sums and Pairs
+  -Units of Measure Analysis (UMA) is fully working. I haven't been able to find any solvable 
+   constraints that the algorithm was unable to solve or any inconsistent constraints that 
+   the algorithm didn't error out on.
+  -UMA is only monovariant
+  -Control Flow Analysis doesn't have subeffecting or polyvariance, but is otherwise fully functional
+  -Let bindings are completely broken :(
+
 
 ## Program Input / Output
 
-The file `src/FUN.hs` contains the program on which the analysis is run. The exact form of this
-program can be adjusted by tweaking the case statement in `example`. One can choose between
-a program demonstrating the use of units of measurement and between a program showing various
-language constructs, which can be used to check flow analysis.
+The file `src/Main.hs` contains the programs on which an analysis can be run. The desired program
+is chosen by tweaking the case expression in the `example` function. 
 
 The output of the program is a typed and annotated version of the input program. The convention is
 that annotation variables are put between curly braces `{ }` while concrete annotations are put
@@ -82,9 +91,9 @@ type and annotation variables.
 Runs W on a given expression and generate the necessary constraints
 for the respective annotation analyses.
 
-  `analyseProgram :: [Decl] -> Either TypeError (Env, Prog, Set Constraint)`
+  `analyseProgram :: Program -> Either TypeError (Map TVar TypeScheme, Program, Set Constraint)`
 
-Runs W on a bunch of top level declarations and finalize the Supply monads. Every Decl
+Runs W on a bunch of top level declarations and finalizes the Supply monads. Every Decl
 has the inferred type of the Decls above it available to it via the environment. Type 
 checking happens in a single pass, so Decls don't have access to the types of Decls 
 defined below them.
@@ -105,14 +114,14 @@ annotations to FUN programs. Think 'asKelvin', 'asMeter', etc...
   
 ### In `src/Analyses/Flow.hs`
 
-  `solveFlowConstraints :: Set FlowConstraint -> (FSubst, Set FlowConstraint)`
+  `solveFlowConstraints :: FSubst -> Set FlowConstraint -> (FSubst, Set FlowConstraint)`
 
 Takes a set of FlowConstraints and builds a substitution mapping each flow variable to the set
 program points reaching this variable.
 
 ### In `src/Analyses/Measure.hs`
 
-  `solveScaleConstraints :: Set ScaleConstraint -> (SSubst, Set ScaleConstraint)`
+  `solveScaleConstraints :: SSubst -> Set ScaleConstraint -> (SSubst, Set ScaleConstraint)`
 
 From a set of ScaleConstraints, build a scale substitution that unifies all matching annotations.
 The resulting substitution is then applied to the resulting type environment to obtain a
@@ -123,7 +132,7 @@ final annotated type environment.
 Print the set of Scale Constraints. Usually the constraint set is first simplified using
 `solveScaleConstraints`.
   
-  `solveBaseConstraints :: Set BaseConstraint -> (BSubst, Set BaseConstraint)`
+  `solveBaseConstraints :: BSubst -> Set BaseConstraint -> (BSubst, Set BaseConstraint)`
 
 Similar to `solveScaleConstraints`.
   
