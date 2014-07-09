@@ -42,7 +42,7 @@ data Expr
   | Abs  Label Name Expr
   | App  Expr Expr
   | Bin  Name Expr Expr
-  | Let  Name Expr Expr
+  | Let  [(Name, Expr)] Expr
   | ITE  Expr Expr Expr
   
   | Con  Label Name Con
@@ -134,7 +134,7 @@ decl n xs e = Decl n (foldr (Abs noLabel) e xs)
 
 -- |Constructs let bindings with multiple definitions
 letn :: [Decl] -> Expr -> Expr
-letn defs e = foldr (\(Decl x e) -> Let x e) e defs
+letn defs = Let $ map (\(Decl x e) -> (x, e)) defs
   
 -- |Constructs a binary operator
 bin :: Name -> Expr -> Expr -> Expr
@@ -163,7 +163,11 @@ showExpr cp =
         Fix l f n e     -> printf "fix %s %s =%s> %s" f n (showAnn l) (showExpr e)
         App e1 e2       -> printf "(%s %s)" (showExpr e1) (showExpr e2)
         Bin n e1 e2     -> printf "(%s %s %s)" (showExpr e1) n (showExpr e2)
-        Let n e1 e2     -> printf "let %s = %s in %s" n (showExpr e1) (showExpr e2)
+        Let xs e        -> printf "let%s in %s" (showBinds xs) (showExpr e) where
+          showBinds []             = ""
+          showBinds ( (nm, e) : xs) = " " ++ nm ++ " = " ++ showExpr e ++ ";"
+                                      
+                                      -- "let %s = %s in %s" n (showExpr e1) (showExpr e2)
         ITE b e1 e2     -> printf "if %s then %s else %s" (showExpr b) (showExpr e1) (showExpr e2)
 
         Con l nm  con   -> printf "%s" (showCon cp nm l con)

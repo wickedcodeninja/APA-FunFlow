@@ -37,7 +37,6 @@ import Data.Map (Map)
 --  annotated version to stdout. Things between curly braces { } denote unresolved 
 --  variables while stuff between brackets [ ] denotes concrete information.
 --  
- 
 
 main :: IO ()
 main = 
@@ -64,7 +63,7 @@ main =
 -- * Example code
   
 -- |Selected Examples to show our code in action
-example = Prog $ case 2 of
+example = Prog $ case 1 of
                    0 -> exLetGen        -- ^ Let is generalized
                    1 -> exMeasure       -- ^ Main program showing our 'units of measure' capabilities
                    2 -> exEverything    -- ^ A whole bunch of random snippets, showing our language and program point tracking
@@ -74,7 +73,7 @@ example = Prog $ case 2 of
                    5 -> exKnor          -- ^ Still no subeffecting :(
                    6 -> exBad
 exLetGen = fmap parseDecl $ 
-  [ "f x y = let r a = a in (let s b = b in Pair (r (s x), s (r y)))"
+  [ "f x y = let r a = a; s x = x in Pair (r (s x), s (r y))"
                  
   , "g x y = f (f x y) (f y x)"
   ]

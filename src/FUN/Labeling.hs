@@ -6,7 +6,7 @@ import FUN.Base
 import FUN.Analyses.Flow
 
 import Control.Monad.Supply
-
+import Control.Monad ( forM )
 
 -- |Declare a type labelable by specifying where to put the labels. @runLabel 
 --  takes a (possibly) unlabeled term, runs a label algorithm and then returns
@@ -39,7 +39,11 @@ instance Labelable Expr where
   label (Abs _ n e)       = do l  <- supply   ; e  <- label e  ; return (Abs l n e)
   label (App e1 e2)       = do e1 <- label e1 ; e2 <- label e2 ; return (App e1 e2)
   label (Bin n e1 e2)     = do e1 <- label e1 ; e2 <- label e2 ; return (Bin n e1 e2)
-  label (Let n e1 e2)     = do e1 <- label e1 ; e2 <- label e2 ; return (Let n e1 e2)
+  label (Let es e2)       = do es <- forM es $ \(nm, e1) -> 
+                                       do e1 <- label e1
+                                          return (nm, e1)
+                               e2 <- label e2
+                               return (Let es e2)
   label (Fix _ f n e)     = do l  <- supply   ; e  <- label e  ; return (Fix l f n e)
   label (Con _ nm c)      = do l  <- supply   ; c  <- label c  ; return (Con l nm c)
   label (Des nm e d)      = do e  <- label e  ; d  <- label d  ; return (Des nm e d)

@@ -17,6 +17,7 @@ import Data.Monoid hiding ( Sum )
 import Data.Functor ((<$>))
 import Control.Applicative ( Applicative (..) )
 import Data.Traversable ( sequenceA )
+import Data.Foldable ( foldlM )
 
 import Control.Monad (foldM, join)
 import Control.Monad.Error 
@@ -238,7 +239,7 @@ liftedUnify a b = lifter (unifyScales a b) where
 capture :: Type -> Env -> Env
 capture r@(TVar nm) = nm ~> r
 capture _ = error $ "capture: not implemented."
-  
+
 -- |Runs the Algorithm W inference for Types and generates constraints later used 
 --  by Control Flow analysis and Measure Analysis. The main part of the algorithm is 
 --  adapted from the book, extended in the obvious way to handle construction and
@@ -313,16 +314,30 @@ analyse exp env = case exp of
                                )
 
                                
-  Let x e1 e2     -> do (t1, s1, c1) <- analyse e1 $ env
-  
-                        t1 <- generalize env t1
-                        
-                        (t2, s2, c2) <- analyse e2 . (x ~~> t1) . subst s1 $ env
+  Let es e2    -> do let es' = flip fmap es $ \(x, e1) -> \env ->
+                                 do (t1, s1, c1) <- analyse e1 $ env
+    
+                                    t1 <- generalize env t1
+                                    let s1' = s1 { typeMap = singleton (x, t1) }
+                                  
+                                    return $ (s1', c1)
+                   
+                     let chained = flip3 foldlM (mempty, S.empty) es' $ \(s1, c1) f -> 
+                           do (s2, c2) <- f . subst s1 $ env
+                              return $ (s2 <> s1, c1 `union` c2)
+                              
+                     (s1, c1) <- chained
+                   
+                     let shadowedEnv = env { typeMap = TSubst $ do env <- getTSubst . typeMap $ env
+                                                                   s1  <- getTSubst . typeMap $ s1
+                                                                   return  $ s1 `M.union` env
+                                       } -- the union prefers types from local environment
+                     (t2, s2, c2) <- analyse e2 $ shadowedEnv
 
-                        return ( t2
-                               , s2 <> s1
-                               , subst s2 c1 `union` c2
-                               )
+                     return ( t2
+                            , s2 -- NOTE: the substitutions obtained in s1 are only local to the let binding and should not be returned
+                            , subst s2 c1 `union` c2
+                            )
 
   -- |If-Then-Else
 
@@ -935,6 +950,10 @@ instance Subst Env Env where
                     , baseMap  = subst m (baseMap  env)
                     }
 
+
+--instance Subst TSubst Constraint where
+--  subst m = id
+  
 instance Subst Env Constraint where
   subst m (FlowConstraint  fs) = FlowConstraint  $ subst m fs
   subst m (ScaleConstraint ss) = ScaleConstraint $ subst m ss
@@ -996,6 +1015,8 @@ instance Subst BSubst Constraint where
  
  
 -- * Singleton Constructors
+instance Singleton TSubst (Name, TypeScheme) where
+  singleton (k, a) = TSubst . return . M.fromList $ [(k, a)] 
 
 instance Singleton Env (TVar, Type) where
   singleton (k, a) = mempty { typeMap = TSubst . return $ M.singleton k (Type a) } 
