@@ -42,7 +42,7 @@ import qualified Data.List as L
 
 import Text.Printf (printf)
         
-            
+        
 -- * Type definitions
 
 -- |Type variables
@@ -234,7 +234,11 @@ liftedUnify :: Scale -> Scale -> Analysis SSubst
 liftedUnify a b = lifter (unifyScales a b) where
   lifter (Left err) = throwError (CannotUnifyMeasurement err)
   lifter (Right r)  = return r
-     
+
+capture :: Type -> Env -> Env
+capture r@(TVar nm) = nm ~> r
+capture _ = error $ "capture: not implemented."
+  
 -- |Runs the Algorithm W inference for Types and generates constraints later used 
 --  by Control Flow analysis and Measure Analysis. The main part of the algorithm is 
 --  adapted from the book, extended in the obvious way to handle construction and
@@ -246,8 +250,8 @@ analyse exp env = case exp of
                             , empty
                             )
 
-  Var x           -> do env <- getTSubst (typeMap env)
-                        s <- (env $* x) $ throwError (UnboundVariable x)
+  Var x           -> do tyEnv <- getTSubst (typeMap env)
+                        s <- (tyEnv $* x) $ throwError (UnboundVariable x)
                         v <- instantiate s
                  
                         return ( v
@@ -258,7 +262,7 @@ analyse exp env = case exp of
   Abs pi x e      -> do a_x <- fresh
                         b_0 <- fresh
 
-                        (t0, s0, c0) <- analyse e . (x ~> a_x) $ env
+                        (t0, s0, c0) <- analyse e . (x ~> a_x) . (capture a_x) $ env
                         
                         a_x <- substM s0 a_x
                         
@@ -271,14 +275,13 @@ analyse exp env = case exp of
                         a_0 <- fresh
                         b_0 <- fresh
 
-                        (t0, s0, c0) <- analyse e . (f ~> TArr b_0 a_x a_0) . (x ~> a_x) $ env
+                        (t0, s0, c0) <- analyse e . (f ~> TArr b_0 a_x a_0) . (x ~> a_x) . (capture a_x) $ env
                         
                         a_0 <- substM s0 a_0
                         
                         (s1, c1) <- t0 `unify` a_0
 
                         let b_1 = subst (s1 <> s0) b_0
-
                         
                         t0  <- substM s1 t0
                         a_x <- substM (s1 <> s0) a_x
@@ -308,7 +311,7 @@ analyse exp env = case exp of
                                  subst  s3        c2 `union`
                                                   c3
                                )
-                               
+
                                
   Let x e1 e2     -> do (t1, s1, c1) <- analyse e1 $ env
   
@@ -320,7 +323,6 @@ analyse exp env = case exp of
                                , s2 <> s1
                                , subst s2 c1 `union` c2
                                )
-
 
   -- |If-Then-Else
 
@@ -763,15 +765,19 @@ sequenceMap :: (Ord k, Applicative f) => Map k (f a) -> f (Map k a)
 sequenceMap = fmap M.fromList . sequenceA . map strength . M.assocs
   
 instance Subst TSubst TSubst where
-  subst m (TSubst r) = TSubst $ do r <- r
-                                   sequenceMap . M.map (subst m . return) $ r
-  
+  subst m@(TSubst t) (TSubst r) = TSubst $ do r <- r
+                                              t <- t
+                                              tyMap <- sequenceMap . M.map (substM m) $ r
+                                              return $ tyMap `M.union` t
+                                              
 instance Subst TSubst (Analysis TypeScheme) where
   subst m s = do r <- s
                  case r of
                    Type ty -> do ty' <- subst m (return ty)
                                  return $ Type ty'
-                   Scheme bnds ty -> error $ "MILITARY SOFTWARE DETECTED"
+                   Scheme bnds ty -> do let cleanEnv = TSubst . fmap (M.filterWithKey $ \k v -> not $ k `S.member` bnds) . getTSubst $ m
+                                        ty <- substM cleanEnv ty
+                                        return $ Scheme bnds ty 
 
 instance Subst FSubst Type where 
   subst m TBool            = TBool
@@ -900,6 +906,20 @@ instance Subst Env (Analysis Type) where
     subst' (TUnit f nm)     = do let f' = subst (flowMap m) f
                                  return $ TUnit f' nm
  
+instance Subst Env TSubst where
+  subst m = subst (baseMap m)
+          . subst (scaleMap m)
+          . subst (flowMap m)
+          . subst (typeMap m)
+  
+instance Subst Env FSubst where
+  subst m r = subst (flowMap m) r
+instance Subst Env SSubst where
+  subst m r = subst (scaleMap m) r
+instance Subst Env BSubst where
+  subst m r = subst (baseMap m) r
+
+ 
 instance Subst Env (Analysis TypeScheme) where
   subst m d = 
     do d <- d
@@ -909,24 +929,29 @@ instance Subst Env (Analysis TypeScheme) where
           Scheme bnds ty -> do ty <- substM m ty
                                return $ Scheme bnds ty
 instance Subst Env Env where
-  subst m env = env { typeMap = TSubst $ do r <- getTSubst . typeMap $ env 
-                                            sequenceMap . fmap (subst m . return) $ r
+  subst m env = env { typeMap  = subst m (typeMap  env)
+                    , flowMap  = subst m (flowMap  env)
+                    , scaleMap = subst m (scaleMap env)
+                    , baseMap  = subst m (baseMap  env)
                     }
 
 instance Subst Env Constraint where
-  subst m (FlowConstraint r)   = FlowConstraint $ subst m r
+  subst m (FlowConstraint  fs) = FlowConstraint  $ subst m fs
   subst m (ScaleConstraint ss) = ScaleConstraint $ subst m ss
-  subst m (BaseConstraint ss)  = BaseConstraint $ subst m ss
+  subst m (BaseConstraint  ss) = BaseConstraint  $ subst m ss
   
 instance Subst Env Flow where
-  subst e = subst (flowMap e)
+  subst = subst . flowMap
 
 instance Subst Env Scale where
-  subst e = subst (scaleMap e)
+  subst = subst . scaleMap
 
 instance Subst Env Base where
-  subst e = subst (baseMap e)
+  subst = subst . baseMap
 
+instance Subst TSubst Env where
+  subst s env = env { typeMap = subst s (typeMap env) }
+  
 instance Subst FSubst Env where
   subst s env = env { typeMap = subst s (typeMap env), flowMap = s <> flowMap env }
   
@@ -940,19 +965,20 @@ instance Monoid Env where
   -- |Substitutions can be chained by first recursively substituting the left substitution
   --  over the right environment then unioning with the left invironment
   p `mappend` q = 
-    let env = Env { 
+    Env { 
       typeMap  = typeMap  p <> typeMap  q,
       flowMap  = flowMap  p <> flowMap  q,
       scaleMap = scaleMap p <> scaleMap q,
       baseMap  = baseMap  p <> baseMap  q
-    } in env
+    }
       
-  mempty = Env { 
-    typeMap  = mempty, 
-    flowMap  = mempty,
-    scaleMap = mempty,
-    baseMap  = mempty
-  }
+  mempty = 
+    Env { 
+      typeMap  = mempty, 
+      flowMap  = mempty,
+      scaleMap = mempty,
+      baseMap  = mempty
+    }
 
   
 instance Subst FSubst Constraint where
