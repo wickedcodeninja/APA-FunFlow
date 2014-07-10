@@ -216,7 +216,23 @@ generalize env ty =
      let boundedVars   = M.keysSet env
          freeVars      = S.fromList $ ftv ty
          unboundedVars = freeVars S.\\ boundedVars
-     return $ Scheme unboundedVars ty
+         
+         freshNames = map (:[]) ['a'..'z'] ++ map (\n -> "t" ++ show n) [0..] 
+         renameAssocs = zip (S.toList unboundedVars) freshNames
+         renameMap = M.fromList renameAssocs
+
+         renameVariables (TUnit f nm) = TUnit f nm
+         renameVariables TBool = TBool
+         renameVariables (TInt s b)  = TInt s b
+         renameVariables (TVar n) = case M.lookup n renameMap of
+                                         Just k  -> TVar k
+                                         Nothing -> TVar n
+         renameVariables (TArr f a b) = TArr f (renameVariables a) (renameVariables b)
+         renameVariables (TProd f nm a b) = TProd f nm (renameVariables a) (renameVariables b)
+         renameVariables (TSum f nm a b) = TSum f nm (renameVariables a) (renameVariables b)
+
+         
+     return $ Scheme (S.fromList $ map snd renameAssocs) (renameVariables ty)
 
      
 liftedUnify :: Scale -> Scale -> Analysis SSubst
