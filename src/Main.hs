@@ -12,7 +12,7 @@ import FUN.Base      -- ^ Abstract syntax tree
 import FUN.Parsing   -- ^ Parser
 import FUN.Labeling  -- ^ Labeling
 import FUN.Analyses 
-  ( analyseProgram, printProgram
+  ( checkProgram, printProgram
   , PrintAnnotations (..), Annotations (..), setAnnotations
   , Constraint
   , TVar, TypeScheme
@@ -32,6 +32,7 @@ import FUN.Analyses.Measure
 import Data.Set (Set)
 import Data.Map (Map)
   
+import qualified Data.Set as S
   
 -- |Runs the analysis on the example program code (down below) and prints an 
 --  annotated version to stdout. Things between curly braces { } denote unresolved 
@@ -47,23 +48,25 @@ main =
                                    ] -}
         
       showResult :: (Map TVar TypeScheme, Program, Set Constraint) -> String
-      showResult (m, p, w) =  let programInfo = "program = " ++ printProgram annotations p m
-                                  flowInfo  = "unresolved flow constraints = "
-                                    ++ (printFlowInformation . extractFlowConstraints $ w)
-                                  scaleInfo = "unresolved scale constraints = "
-                                    ++ (printScaleInformation . extractScaleConstraints $ w)
-                                  baseInfo  = "unresolved base constraints = "
-                                    ++ (printBaseInformation . extractBaseConstraints $ w)
-                                
-                              in programInfo ++ "\n\n"
-                              ++ flowInfo    ++ "\n\n"
-                              ++ scaleInfo   ++ "\n\n"
-                              ++ baseInfo    ++ "\n\n"
-  in either print (putStrLn . showResult) . analyseProgram $ example
+      showResult (m, p, w) =  let printUnresolved printer extracter s =
+                                    let cs = extracter w
+                                    in if not (S.null cs)
+                                       then s ++ "unresolved " ++ s ++ " constraints = " ++ printer cs ++ "\n\n"
+                                       else ""
+                                    
+                                  programInfo = "program = " ++ printProgram annotations p m
+                                  flowInfo  = printUnresolved printFlowInformation  extractFlowConstraints  "flow"
+                                  scaleInfo = printUnresolved printScaleInformation extractScaleConstraints "scale"
+                                  baseInfo  = printUnresolved printBaseInformation  extractBaseConstraints  "base"
+                                  
+                              in programInfo
+                              ++ flowInfo
+                              ++ scaleInfo
+                              ++ baseInfo
+  in either print (putStrLn . showResult) . checkProgram $ example
 
 -- * Example code
   
--- |Selected Examples to show our code in action
 example = Prog $ case 1 of
                    0 -> exLetGen        -- ^ Let is generalized
                    1 -> exMeasure       -- ^ Main program showing our 'units of measure' capabilities

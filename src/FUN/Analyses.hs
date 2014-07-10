@@ -1,4 +1,5 @@
 -- (C) 2013 Pepijn Kokke & Wout Elsinghorst
+-- (C) 2014 Wout Elsinghorst
 
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
@@ -48,7 +49,8 @@ import Text.Printf (printf)
 -- * Type definitions
 
 -- |Type variables
-type TVar = String
+type TVar 
+  = String
 
 -- |Representation for inferred types in our functional language. The Flow field
 --  holds flow variables to which Control Flow Constraints are attached during the
@@ -61,12 +63,12 @@ data Type
   | TProd Flow Name Type Type   -- 
   | TSum  Flow Name Type Type
   | TUnit Flow Name
- -- deriving (Eq, Ord)
+  deriving (Eq, Ord)
 
 data TypeScheme
   = Type Type
   | Scheme (Set TVar) Type
-  --deriving (Eq, Ord)
+  deriving (Eq, Ord)
 
 -- |Representation for possible errors in algorithm W.
 data TypeError
@@ -77,7 +79,7 @@ data TypeError
   | CannotUnify     Type Type -- ^ thrown when types cannot be unified
   | CannotUnifyMeasurement MeasureError
   | OtherError      String    -- ^ stores miscellaneous errors
- -- deriving Eq
+  deriving (Eq, Ord)
 
 class FTV t where
   ftv :: t -> [TVar]
@@ -87,7 +89,7 @@ class FTV t where
 instance FTV Type where 
   ftv TBool           = []
   ftv (TInt _ _)      = []
-  ftv (TVar  n)     = [n]
+  ftv (TVar  n)       = [n]
   ftv (TArr  _   a b) = L.union (ftv a) (ftv b)
   ftv (TProd _ _ a b) = L.union (ftv a) (ftv b)
   ftv (TSum  _ _ a b) = L.union (ftv a) (ftv b)
@@ -95,12 +97,12 @@ instance FTV Type where
   
 -- |Returns the set of free type variables in a type.
 instance FTV TypeScheme where
-  ftv (Type ty) = ftv ty
+  ftv (Type ty)        = ftv ty
   ftv (Scheme bnds ty) = S.toList $ S.fromList (ftv ty) S.\\ bnds
   
 -- |Extract the type from primitive literals.
 typeOf :: Lit -> Type
-typeOf (Bool _) = TBool
+typeOf (Bool _)        = TBool
 typeOf (Integer s b _) = TInt s b
 
 -- |Collection of built-in functions available to all programs. At the time of writing, these
@@ -110,17 +112,18 @@ typeOf (Integer s b _) = TInt s b
 prelude :: Analysis (Env, [Decl])
 prelude = 
   let id = Abs noLabel "x" (Var "x")
+      mkConvertArrow b s v = TArr v (TInt SNil BNil) (TInt s b)
       predefs =
-        [ ("asKelvin",  "Kelvin", id, \v s -> TArr v (TInt SNil BNil) (TInt s  BNil))
-        , ("asCelcius", "Kelvin", id, \v s -> TArr v (TInt SNil BNil) (TInt s  (BCon "Freezing")))
-        , ("asFeet",    "Feet",   id, \v s -> TArr v (TInt SNil BNil) (TInt s  BNil))
-        , ("asMeters",  "Meter",  id, \v s -> TArr v (TInt SNil BNil) (TInt s  BNil))
-        , ("asDollars", "Dollar", id, \v s -> TArr v (TInt SNil BNil) (TInt s  BNil))
-        , ("asEuros",   "Euro",   id, \v s -> TArr v (TInt SNil BNil) (TInt s  BNil))
-        , ("asSeconds", "Second", id, \v s -> TArr v (TInt SNil BNil) (TInt s  BNil))
+        [ ("asKelvin",  "Kelvin", id, mkConvertArrow BNil)
+        , ("asCelcius", "Kelvin", id, mkConvertArrow (BCon "Freezing"))
+        , ("asFeet",    "Feet",   id, mkConvertArrow BNil)
+        , ("asMeters",  "Meter",  id, mkConvertArrow BNil)
+        , ("asDollars", "Dollar", id, mkConvertArrow BNil)
+        , ("asEuros",   "Euro",   id, mkConvertArrow BNil)
+        , ("asSeconds", "Second", id, mkConvertArrow BNil)
         ]
   in do ps <- forM predefs $ \(nm, u, e, f) -> do v <- fresh;
-                                                  return ( (nm, Type $ f v $ SCon u), Decl nm e)
+                                                  return ( (nm, Type $ f (SCon u) v), Decl nm e)
         let (env, ds) = unzip ps;
         return ( mempty { typeMap = TSubst $ return $ M.fromList env }
                , ds
@@ -158,8 +161,8 @@ x ~~> t = \env -> env { typeMap = TSubst $ do m <- getTSubst . typeMap $ env
 --  Errors are reported iff the type checking algorithm for the underlying type system would 
 --  fail, although there may be unresolved constraints that are either inconsistent or just not fully
 --  handled yet. 
-analyseProgram :: Program -> Either TypeError (Map TVar TypeScheme, Program, Set Constraint)
-analyseProgram (Prog ds) = withFreshVars $
+checkProgram :: Program -> Either TypeError (Map TVar TypeScheme, Program, Set Constraint)
+checkProgram (Prog ds) = withFreshVars $
   do -- |Initialize pre-typed prelude for standard measurement functions
     (preludeEnv, lib) <- prelude
 
@@ -211,8 +214,7 @@ instantiate (Scheme bnds ty) =
           
 generalize :: Env -> Type -> Analysis TypeScheme
 generalize env ty = 
-  do let TSubst r = typeMap env
-     env <- r
+  do env <- getTSubst . typeMap $ env
      let boundedVars   = M.keysSet env
          freeVars      = S.fromList $ ftv ty
          unboundedVars = freeVars S.\\ boundedVars
@@ -242,7 +244,7 @@ liftedUnify a b = lifter (unifyScales a b) where
 
 capture :: Type -> Env -> Env
 capture r@(TVar nm) = nm ~> r
-capture _ = error $ "capture: not implemented."
+capture _           = error $ "capture: not implemented."
 
 -- |Decides weither Lets should be interpreted as local declarations belonging to a function
 --  or as a list of top-level declarations.
@@ -339,7 +341,7 @@ analyse export exp env = case exp of
                      let shadowedEnv = env { typeMap = TSubst $ do env <- getTSubst . typeMap $ env
                                                                    s1  <- getTSubst . typeMap $ s1
                                                                    return  $ s1 `M.union` env
-                                       }
+                                           }
                                        
                      (t2, s2, c2) <- analyse Local e2 $ shadowedEnv
 
@@ -365,7 +367,7 @@ analyse export exp env = case exp of
                         t1 <- substM (s3 <> s2) t1
                         t2 <- substM  s3        t2
 
-                        (    s4, c4) <- t1 `unify` t2;
+                        (    s4, c4) <- t1 `unify` t2
 
                         t2 <- substM  s4        t2
                         
@@ -577,23 +579,11 @@ withFreshVars x = evalSupply (evalSupplyT (runErrorT x) freshAVars) freshTVars
     letters = fmap (: []) ['a'..'z']
     numbers = fmap (('t' :) . show) [0..]
 
---type Analysis a = ErrorT TypeError (SupplyT FVar (Supply TVar)) a
-     {-
--- |Refreshes all entries in a type environment.
-refreshAll :: Either TypeError (Env, Program, Set Constraint) -> Either TypeError (Env, Program, Set Constraint)
-refreshAll env = do (env, p, c) <- env;
-                    m <- mapM (withFreshVars . refresh) . getTSubst . typeMap $ env
-                    return ( env { 
-                               typeMap = TSubst (return m) 
-                             }
-                           , p
-                           , c
-                           )
-                           -}
+
 -- |Replaces every type variable with a fresh one.
 refresh :: TypeScheme -> Analysis TypeScheme
 refresh t1 = do subs <- forM (ftv t1) $ \a ->
-                          do b <- (fresh :: Analysis Type)
+                          do b <- fresh :: Analysis Type
                              return $ singleton (a, Type b)
                 subst (mconcat subs :: Env) (return t1)
                 
@@ -601,8 +591,7 @@ class Fresh t where
   fresh :: Analysis t
 
 instance Fresh Type where
-  fresh = do n <- lift (lift supply)
-             return $ TVar n
+  fresh = fmap TVar $ lift (lift supply)
 
 instance Fresh Flow where
   fresh = fmap FVar $ lift supply
@@ -715,8 +704,7 @@ instance Show Type where
   show = showType mempty
 
 instance Show TypeScheme where
-  show (Type ty) = showType mempty ty
-  show (Scheme binders ty) = "forall " ++ (concat . L.intersperse " " . S.toList $ binders) ++ " . " ++ showType mempty ty
+  show = showScheme mempty
 
   
 instance Show TypeError where
@@ -736,7 +724,7 @@ data Constraint
   = FlowConstraint  FlowConstraint
   | ScaleConstraint ScaleConstraint
   | BaseConstraint  BaseConstraint
-    deriving (Eq, Ord, Show)
+  deriving (Eq, Ord, Show)
 
 flowEquality :: Flow -> Flow -> Set Constraint
 flowEquality a b = singleton $ FlowConstraint $ FlowEquality a b
@@ -782,9 +770,9 @@ extractBaseConstraints = unionMap findBases where
                     
 -- * Environments
 
-newtype TSubst = TSubst { 
-    getTSubst :: Analysis (Map TVar TypeScheme)
-  } --deriving (Eq, Ord, Show)
+newtype TSubst = TSubst
+  { getTSubst :: Analysis (Map TVar TypeScheme)
+  }
 
 strength :: Functor f => (a, f b) -> f (a, b)
 strength (a, m) = fmap (a,) m
@@ -826,7 +814,7 @@ instance Subst FSubst Type where
   subst m v@(TVar _)       = v
 
 instance Subst FSubst TypeScheme where
-  subst m (Type ty) = Type (subst m ty)
+  subst m (Type ty)        = Type (subst m ty)
   subst m (Scheme bnds ty) = Scheme bnds (subst m ty)
   
 -- |Substitutes a type for a type variable in a type.
@@ -844,7 +832,7 @@ instance Subst SSubst Type where
   subst m v@(TVar _)          = v
 
 instance Subst SSubst TypeScheme where
-  subst m (Type ty) = Type (subst m ty)
+  subst m (Type ty)        = Type (subst m ty)
   subst m (Scheme bnds ty) = Scheme bnds (subst m ty)
   
 instance Subst BSubst Type where
@@ -859,7 +847,7 @@ instance Subst BSubst Type where
   subst m v@(TVar _)          = v
 
 instance Subst BSubst TypeScheme where
-  subst m (Type ty) = Type (subst m ty)
+  subst m (Type ty)        = Type (subst m ty)
   subst m (Scheme bnds ty) = Scheme bnds (subst m ty)
   
 instance Subst FSubst TSubst where
@@ -877,8 +865,8 @@ instance Monoid TSubst where
                               return $ st `M.union` s' 
   mempty        = TSubst $ return M.empty
   
-data Env = Env { 
-    typeMap  :: TSubst          -- ^ Type substitutions used in W
+data Env = Env 
+  { typeMap  :: TSubst          -- ^ Type substitutions used in W
   , flowMap  :: FSubst
   , scaleMap :: SSubst
   , baseMap  :: BSubst
@@ -960,10 +948,6 @@ instance Subst Env Env where
                     , baseMap  = subst m (baseMap  env)
                     }
 
-
---instance Subst TSubst Constraint where
---  subst m = id
-  
 instance Subst Env Constraint where
   subst m (FlowConstraint  fs) = FlowConstraint  $ subst m fs
   subst m (ScaleConstraint ss) = ScaleConstraint $ subst m ss
@@ -994,19 +978,19 @@ instance Monoid Env where
   -- |Substitutions can be chained by first recursively substituting the left substitution
   --  over the right environment then unioning with the left invironment
   p `mappend` q = 
-    Env { 
-      typeMap  = typeMap  p <> typeMap  q,
-      flowMap  = flowMap  p <> flowMap  q,
-      scaleMap = scaleMap p <> scaleMap q,
-      baseMap  = baseMap  p <> baseMap  q
+    Env 
+    { typeMap  = typeMap  p <> typeMap  q
+    , flowMap  = flowMap  p <> flowMap  q
+    , scaleMap = scaleMap p <> scaleMap q
+    , baseMap  = baseMap  p <> baseMap  q
     }
       
   mempty = 
-    Env { 
-      typeMap  = mempty, 
-      flowMap  = mempty,
-      scaleMap = mempty,
-      baseMap  = mempty
+    Env 
+    { typeMap  = mempty 
+    , flowMap  = mempty
+    , scaleMap = mempty
+    , baseMap  = mempty
     }
 
   
@@ -1026,7 +1010,7 @@ instance Subst BSubst Constraint where
  
 -- * Singleton Constructors
 instance Singleton TSubst (Name, TypeScheme) where
-  singleton (k, a) = TSubst . return . M.fromList $ [(k, a)] 
+  singleton (k, a) = TSubst . return $ M.fromList [(k, a)] 
 
 instance Singleton Env (TVar, Type) where
   singleton (k, a) = mempty { typeMap = TSubst . return $ M.singleton k (Type a) } 

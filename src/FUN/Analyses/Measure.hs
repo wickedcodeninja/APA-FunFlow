@@ -54,11 +54,12 @@ instance Show Scale where
   show (SMul a b)         = "(" ++ show a ++ "*" ++ show b ++ ")"
   show (SInv a)           = "(1/" ++ show a ++ ")"
    
-data MeasureError = MeasuresDontUnify String
+data MeasureError 
+  = MeasuresDontUnify String
+  deriving (Eq, Ord)
 
 instance Show MeasureError where
   show (MeasuresDontUnify str) = str
-
  
 throwMeasureError :: MeasureError -> Either MeasureError SSubst
 throwMeasureError = Left
