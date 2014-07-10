@@ -54,8 +54,8 @@ solveFlowConstraints s0 c0 =
                                                                       else (mempty, mempty, mempty, S.singleton r)
         
       findReachable :: Set FVar -> Set FVar
-      findReachable src = src        >>~ \v      -> 
-                          equalities >>~ \(a, b) -> 
+      findReachable src = src        >>>= \v      -> 
+                          equalities >>>= \(a, b) -> 
                             if v == a && not (b `S.member` src)
                                then S.singleton b
                                else
@@ -76,9 +76,9 @@ solveFlowConstraints s0 c0 =
                 else growReachables $ zipWith (\(nm, a) b -> (nm, a `S.union` b) ) cs round
       
       findLabels :: FVar -> Set Label
-      findLabels v = reachables >>~ \(nm, r) -> if S.member v r
-                                                   then S.singleton nm
-                                                   else mempty
+      findLabels v = reachables >>>= \(nm, r) -> if S.member v r
+                                                    then S.singleton nm
+                                                    else mempty
       
       filterUnreachable = M.mapMaybe $ \a -> case a of FSet l -> if S.null l
                                                                     then Nothing

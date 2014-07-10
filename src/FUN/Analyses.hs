@@ -18,6 +18,7 @@ import Data.Functor ((<$>))
 import Control.Applicative ( Applicative (..) )
 import Data.Traversable ( sequenceA )
 import Data.Foldable ( foldlM )
+import Data.Traversable ( traverse )
 
 import Control.Monad (foldM, join)
 import Control.Monad.Error 
@@ -118,9 +119,8 @@ prelude =
         , ("asEuros",   "Euro",   id, \v s -> TArr v (TInt SNil BNil) (TInt s  BNil))
         , ("asSeconds", "Second", id, \v s -> TArr v (TInt SNil BNil) (TInt s  BNil))
         ]
-  in do ps <- mapM (\(nm, u, e, f) -> do v <- fresh;
-                                        
-                                         return ( (nm, Type $ f v $ SCon u), Decl nm e) ) $ predefs;
+  in do ps <- forM predefs $ \(nm, u, e, f) -> do v <- fresh;
+                                                  return ( (nm, Type $ f v $ SCon u), Decl nm e)
         let (env, ds) = unzip ps;
         return ( mempty { typeMap = TSubst $ return $ M.fromList env }
                , ds
@@ -233,7 +233,7 @@ capture _ = error $ "capture: not implemented."
 data ExportType 
   = Local 
   | Global 
-
+  
 -- |Runs the Algorithm W inference for Types and generates constraints later used 
 --  by Control Flow analysis and Measure Analysis. The main part of the algorithm is 
 --  adapted from the book, extended in the obvious way to handle construction and
@@ -308,7 +308,7 @@ analyse export exp env = case exp of
                                )
 
                                
-  Let es e2    -> do let es' = flip fmap es $ \(x, e1) -> \env ->
+  Let es e2    -> do let es' = es >>~ \(x, e1) -> \env ->
                                  do (t1, s1, c1) <- analyse Local e1 $ env
     
                                     t1 <- generalize env t1
@@ -316,12 +316,10 @@ analyse export exp env = case exp of
                                   
                                     return $ (s1', c1)
                    
-                     let chained = flip3 foldlM (mempty, S.empty) es' $ \(s1, c1) f -> 
+                     (s1, c1) <- flip3 foldlM (mempty, S.empty) es' $ \(s1, c1) f -> 
                            do (s2, c2) <- f . subst s1 $ env
                               return $ (s2 <> s1, c1 `union` c2)
                               
-                     (s1, c1) <- chained
-                   
                      let shadowedEnv = env { typeMap = TSubst $ do env <- getTSubst . typeMap $ env
                                                                    s1  <- getTSubst . typeMap $ s1
                                                                    return  $ s1 `M.union` env
@@ -775,13 +773,10 @@ newtype TSubst = TSubst {
 strength :: Functor f => (a, f b) -> f (a, b)
 strength (a, m) = fmap (a,) m
   
-sequenceMap :: (Ord k, Applicative f) => Map k (f a) -> f (Map k a)
-sequenceMap = fmap M.fromList . sequenceA . map strength . M.assocs
-  
 instance Subst TSubst TSubst where
   subst m@(TSubst t) (TSubst r) = TSubst $ do r <- r
                                               t <- t
-                                              tyMap <- sequenceMap . M.map (substM m) $ r
+                                              tyMap <- sequenceA . M.map (substM m) $ r
                                               return $ tyMap `M.union` t
                                               
 instance Subst TSubst (Analysis TypeScheme) where

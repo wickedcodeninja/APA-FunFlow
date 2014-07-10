@@ -185,7 +185,7 @@ pick n (x : xs) = map (x :) (pick (n - 1) xs) ++ pick n xs
      
 
 setJoin :: Ord a => Set (Set a) -> Set a
-setJoin = (>>~ id)
+setJoin = (>>>= id)
          
 solveScaleConstraints :: SSubst -> Set ScaleConstraint -> (SSubst, Set ScaleConstraint)
 solveScaleConstraints s0 c0 = 
@@ -235,7 +235,7 @@ solveScaleConstraints s0 c0 =
 
               
   
-      c1 = (subst totalSub c0) >>~ maker
+      c1 = (subst totalSub c0) >>>= maker
           
           
   in (totalSub, c1)
