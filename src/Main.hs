@@ -41,9 +41,10 @@ import Data.Map (Map)
 main :: IO ()
 main = 
   let annotations = setAnnotations [ MeasureInformation       -- ^Set which annotations to print. Leave
+                                   ] {-
                                    , ProgramPoints            --  empty to just print the W-inferred 
                                    , FlowInformation          --  types.       
-                                   ]
+                                   ] -}
         
       showResult :: (Map TVar TypeScheme, Program, Set Constraint) -> String
       showResult (m, p, w) =  let programInfo = "program = " ++ printProgram annotations p m
