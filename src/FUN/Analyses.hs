@@ -33,17 +33,29 @@ import Control.Monad.Supply
   , supply, evalSupply, evalSupplyT
   )
   
-import Control.Monad.Trans (lift)
+import Control.Monad.Trans 
+  ( lift
+  )
 
-import Data.Traversable (forM, mapM)
-import Data.Map (Map)
-import Data.Set (Set, empty, union)
+import Data.Traversable 
+  ( forM
+  , mapM
+  )
+import Data.Map 
+  ( Map
+  )
+import Data.Set 
+  ( Set
+  , empty, union
+  )
 
 import qualified Data.Map  as M
 import qualified Data.Set  as S
 import qualified Data.List as L
 
-import Text.Printf (printf)
+import Text.Printf 
+  ( printf
+  )
         
         
 -- * Type definitions
@@ -114,18 +126,20 @@ prelude =
   let id = Abs noLabel "x" (Var "x")
       mkConvertArrow b s v = TArr v (TInt SNil BNil) (TInt s b)
       predefs =
-        [ ("asKelvin",  "Kelvin", id, mkConvertArrow BNil)
-        , ("asCelcius", "Kelvin", id, mkConvertArrow (BCon "Freezing"))
-        , ("asFeet",    "Feet",   id, mkConvertArrow BNil)
-        , ("asMeters",  "Meter",  id, mkConvertArrow BNil)
-        , ("asDollars", "Dollar", id, mkConvertArrow BNil)
-        , ("asEuros",   "Euro",   id, mkConvertArrow BNil)
-        , ("asSeconds", "Second", id, mkConvertArrow BNil)
+        [ ("asKelvin",  "Kelvin", id, mkConvertArrow $ BNil)
+        , ("asCelcius", "Kelvin", id, mkConvertArrow $ BCon "Freezing")
+        , ("asFeet",    "Feet",   id, mkConvertArrow $ BNil)
+        , ("asMeters",  "Meter",  id, mkConvertArrow $ BNil)
+        , ("asDollars", "Dollar", id, mkConvertArrow $ BNil)
+        , ("asEuros",   "Euro",   id, mkConvertArrow $ BNil)
+        , ("asSeconds", "Second", id, mkConvertArrow $ BNil)
         ]
-  in do ps <- forM predefs $ \(nm, u, e, f) -> do v <- fresh;
-                                                  return ( (nm, Type $ f (SCon u) v), Decl nm e)
+  in do ps <- forM predefs $ \(nm, u, e, f) -> 
+                do v <- fresh;
+                   return ( (nm, Type $ f (SCon u) v), Decl nm e)
         let (env, ds) = unzip ps;
-        return ( mempty { typeMap = TSubst $ return $ M.fromList env }
+        return ( mempty { typeMap = TSubst $ return $ M.fromList env 
+                        }
                , ds
                )
 
@@ -141,13 +155,15 @@ type Analysis a = ErrorT TypeError (SupplyT FVar (Supply TVar)) a
 
 -- |`(x ~> t) env` can be read as 'simplify variable `x` to type `t` in the environment `env`
 (~>) :: TVar -> Type -> Env -> Env
-x ~> t = \env -> env { typeMap = TSubst $ do m <- getTSubst . typeMap $ env
-                                             return $ M.insert x (Type t) m  
+x ~> t = \env -> env { typeMap = TSubst $ 
+                         do m <- getTSubst . typeMap $ env
+                            return $ M.insert x (Type t) m  
                      }
 
 (~~>) :: TVar -> TypeScheme -> Env -> Env
-x ~~> t = \env -> env { typeMap = TSubst $ do m <- getTSubst . typeMap $ env
-                                              return $ M.insert x t m  
+x ~~> t = \env -> env { typeMap = TSubst $ 
+                          do m <- getTSubst . typeMap $ env
+                             return $ M.insert x t m  
                       }
       
 -- |The entrypoint to the analysis. Takes an untyped program as argument and returns either
@@ -233,7 +249,6 @@ generalize env ty =
          renameVariables (TProd f nm a b) = TProd f nm (renameVariables a) (renameVariables b)
          renameVariables (TSum f nm a b) = TSum f nm (renameVariables a) (renameVariables b)
 
-         
      return $ Scheme (S.fromList $ map snd renameAssocs) (renameVariables ty)
 
      
@@ -406,7 +421,7 @@ analyse export exp env = case exp of
 
                               b_0 <- fresh
 
-                              return ( TSum b_0 nm t1 t2
+                              return  ( TSum b_0 nm t1 t2
                                       , s1
                                       , c1 `union` simpleFlow b_0 pi
                                       )
@@ -416,7 +431,7 @@ analyse export exp env = case exp of
 
                               b_0 <- fresh
 
-                              return ( TSum b_0 nm t1 t2
+                              return  ( TSum b_0 nm t1 t2
                                       , s1
                                       , c1 `union` simpleFlow b_0 pi
                                       )
@@ -571,21 +586,20 @@ occurs n t = n `elem` ftv t
 -- |Provides an infinite stream of names to things in the @Analysis@ monad,
 --  reducing it to just an @Either@ value containing perhaps a TypeError.
 withFreshVars :: Analysis a -> Either TypeError a
-withFreshVars x = evalSupply (evalSupplyT (runErrorT x) freshAVars) freshTVars
-  where
+withFreshVars x = evalSupply (evalSupplyT (runErrorT x) freshAVars) freshTVars where
   freshAVars = fmap show [0..]
-  freshTVars = letters ++ numbers
-    where
+  freshTVars = letters ++ numbers where
     letters = fmap (: []) ['a'..'z']
     numbers = fmap (('t' :) . show) [0..]
 
 
 -- |Replaces every type variable with a fresh one.
 refresh :: TypeScheme -> Analysis TypeScheme
-refresh t1 = do subs <- forM (ftv t1) $ \a ->
-                          do b <- fresh :: Analysis Type
-                             return $ singleton (a, Type b)
-                subst (mconcat subs :: Env) (return t1)
+refresh t1 = 
+  do subs <- forM (ftv t1) $ \a ->
+                do b <- fresh :: Analysis Type
+                   return $ singleton (a, Type b)
+     subst (mconcat subs :: Env) (return t1)
                 
 class Fresh t where
   fresh :: Analysis t
@@ -610,7 +624,7 @@ data Annotations
   = FlowInformation
   | MeasureInformation
   | ProgramPoints
-    deriving (Ord, Eq, Show)
+  deriving (Ord, Eq, Show)
 
 type PrintAnnotations = Set Annotations
 
@@ -636,12 +650,12 @@ printProgram cp (Prog p) env =
                                Just r  -> nm ++ " :: " ++ (showScheme cp r)
                                Nothing -> error $ "printProgram: no matching type found for function \"" ++ nm ++ "\""
       funcBody = showDecl (printProgramPoints cp)
+
       prefix = "{\n"
       suffix = "}"
       
-      printer x xs = "  " ++ funcType x ++ "\n  " ++ funcBody x ++ "\n\n" ++ xs 
-      
-  in prefix ++ foldr printer "" p ++ suffix
+      printedProgram = foldR "" p $ \x xs -> "  " ++ funcType x ++ "\n  " ++ funcBody x ++ "\n\n" ++ xs
+  in prefix ++ printedProgram ++ suffix
   
 showScheme :: PrintAnnotations -> TypeScheme -> String
 showScheme ann (Type ty) = showType ann ty
@@ -652,48 +666,48 @@ showScheme ann (Scheme bnds ty) = forallString ++ showType ann ty where
 -- |Pretty print a given type. The PrintAnnotation parameter is used to find-tune
 --  the printing of type annotations.
 showType :: PrintAnnotations -> Type -> String
-showType cp =
-  let printAnn (FVar s) = if printFlowInfo cp 
-                             then "{" ++ s ++ "}" 
-                             else ""
-      printAnn (FSet l) = if printFlowInfo cp 
-                             then "[" ++ (L.foldr1 (\x xs -> x ++ ", " ++ xs) . S.toList $ l) ++ "]" 
-                             else "" where
+showType cp = showType where
+  printAnn (FVar s) = if printFlowInfo cp 
+                          then "{" ++ s ++ "}" 
+                          else ""
+  printAnn (FSet l) = if printFlowInfo cp 
+                          then "[" ++ (L.foldr1 (\x xs -> x ++ ", " ++ xs) . S.toList $ l) ++ "]" 
+                          else "" where
 
-      showType ty = case ty of
-        TBool -> "Bool"
-        TInt s b -> "Integer" ++ showScaleBase where
-          showScaleBase = if printMeasureInfo cp
-                             then if s == SNil
-                                     then "" else
-                                  if b == BNil
-                                     then case s of
-                                             SVar p -> "{" ++ p ++ "}"
-                                             _      -> "[" ++ show (simplify s) ++ "]"
-                                     else case (s, b) of
-                                             (SVar p, BVar q) -> "{" ++ p ++ "@" ++ q ++ "}"
-                                             (SVar p,      _) -> "{" ++ p ++ "}@[" ++ show b ++ "]"
-                                             (_     , BVar q) -> "[" ++ show s ++ "]@{" ++ q ++ "}"
-                                             (_     ,      _) -> "[" ++ show s ++ "@" ++ show b ++ "]"
-                                             
-                                             
-                             else ""      
-        TVar n -> n
-        TArr  v a b -> printf "%s -%s> %s" (wrap a) (printAnn v) (wrap b) where
-            wrap ty@(TArr _ _ _) = printf "(%s)" (showType ty)
-            wrap ty              = showType ty
-        TProd v nm a b -> printf "%s%s(%s, %s)" nm (printAnn v) (wrap a) (wrap b) where
-            wrap ty@(TProd _ _ _ _) = printf "(%s)" (showType ty)
-            wrap ty@(TSum  _ _ _ _) = printf "(%s)" (showType ty)
-            wrap ty@(TArr _ _ _)    = printf "(%s)" (showType ty)
-            wrap ty                 = showType ty
-        TSum v nm a b -> printf "%s%s %s %s" nm (printAnn v) (wrap a) (wrap b) where
-            wrap ty@(TProd _ _ _ _) = printf "(%s)" (showType ty)
-            wrap ty@(TSum  _ _ _ _) = printf "(%s)" (showType ty)
-            wrap ty@(TArr _ _ _)    = printf "(%s)" (showType ty)
-            wrap ty                 = showType ty
-        TUnit v nm -> printf "%s%s()" nm (printAnn v)
-  in showType
+  showType ty = case ty of
+    TBool -> "Bool"
+    TInt s b -> "Integer" ++ showScaleBase where
+      showScaleBase = if printMeasureInfo cp
+                          then if s == SNil
+                                  then "" else
+                              if b == BNil
+                                  then case s of
+                                          SVar p -> "{" ++ p ++ "}"
+                                          _      -> "[" ++ show (simplify s) ++ "]"
+                                  else case (s, b) of
+                                          (SVar p, BVar q) -> "{" ++ p ++ "@" ++ q ++ "}"
+                                          (SVar p,      _) -> "{" ++ p ++ "}@[" ++ show b ++ "]"
+                                          (_     , BVar q) -> "[" ++ show s ++ "]@{" ++ q ++ "}"
+                                          (_     ,      _) -> "[" ++ show s ++ "@" ++ show b ++ "]"
+                                          
+                                          
+                          else ""      
+    TVar n -> n
+    TArr  v a b -> printf "%s -%s> %s" (wrap a) (printAnn v) (wrap b) where
+        wrap ty@(TArr _ _ _) = printf "(%s)" (showType ty)
+        wrap ty              = showType ty
+    TProd v nm a b -> printf "%s%s(%s, %s)" nm (printAnn v) (wrap a) (wrap b) where
+        wrap ty@(TProd _ _ _ _) = printf "(%s)" (showType ty)
+        wrap ty@(TSum  _ _ _ _) = printf "(%s)" (showType ty)
+        wrap ty@(TArr _ _ _)    = printf "(%s)" (showType ty)
+        wrap ty                 = showType ty
+    TSum v nm a b -> printf "%s%s %s %s" nm (printAnn v) (wrap a) (wrap b) where
+        wrap ty@(TProd _ _ _ _) = printf "(%s)" (showType ty)
+        wrap ty@(TSum  _ _ _ _) = printf "(%s)" (showType ty)
+        wrap ty@(TArr _ _ _)    = printf "(%s)" (showType ty)
+        wrap ty                 = showType ty
+    TUnit v nm -> printf "%s%s()" nm (printAnn v)
+
 
 instance Error TypeError where
   noMsg       = OtherError "no message"
@@ -759,8 +773,8 @@ extractFlowConstraints = unionMap findFlows where
 -- |Seperate the Scale Constraints from the rest of the Constraint set
 extractScaleConstraints :: Set Constraint -> Set ScaleConstraint
 extractScaleConstraints = unionMap findScales where
-    findScales (ScaleConstraint ss) = S.singleton ss
-    findScales _                    = S.empty
+  findScales (ScaleConstraint ss) = S.singleton ss
+  findScales _                    = S.empty
 
 -- |Seperate the Base Constraints from the rest of the Constraint set
 extractBaseConstraints :: Set Constraint -> Set BaseConstraint
@@ -778,19 +792,21 @@ strength :: Functor f => (a, f b) -> f (a, b)
 strength (a, m) = fmap (a,) m
   
 instance Subst TSubst TSubst where
-  subst m@(TSubst t) (TSubst r) = TSubst $ do r <- r
-                                              t <- t
-                                              tyMap <- sequenceA . M.map (substM m) $ r
-                                              return $ tyMap `M.union` t
-                                              
+  subst m@(TSubst t) (TSubst r) = TSubst $ 
+    do r <- r
+       t <- t
+       tyMap <- sequenceA . M.map (substM m) $ r
+       return $ tyMap `M.union` t
+                                            
 instance Subst TSubst (Analysis TypeScheme) where
-  subst m s = do r <- s
-                 case r of
-                   Type ty -> do ty' <- subst m (return ty)
-                                 return $ Type ty'
-                   Scheme bnds ty -> do let cleanEnv = TSubst . fmap (M.filterWithKey $ \k v -> not $ k `S.member` bnds) . getTSubst $ m
-                                        ty <- substM cleanEnv ty
-                                        return $ Scheme bnds ty 
+  subst m s = 
+    do r <- s
+       case r of
+         Type ty -> do ty' <- subst m (return ty)
+                       return $ Type ty'
+         Scheme bnds ty -> do let cleanEnv = TSubst . fmap (M.filterWithKey $ \k v -> not $ k `S.member` bnds) . getTSubst $ m
+                              ty <- substM cleanEnv ty
+                              return $ Scheme bnds ty 
 
 instance Subst FSubst Type where 
   subst m TBool            = TBool
@@ -851,13 +867,13 @@ instance Subst BSubst TypeScheme where
   subst m (Scheme bnds ty) = Scheme bnds (subst m ty)
   
 instance Subst FSubst TSubst where
-  subst m (TSubst r) = TSubst $ do r <- r; return $ M.map (subst m) r
+  subst m (TSubst r) = TSubst $ r >>~ M.map (subst m)
   
 instance Subst SSubst TSubst where
-  subst m (TSubst r) = TSubst $ do r <- r; return $ M.map (subst m) r
+  subst m (TSubst r) = TSubst $ r >>~ M.map (subst m)
 
 instance Subst BSubst TSubst where
-  subst m (TSubst r) = TSubst $ do r <- r; return $ M.map (subst m) r
+  subst m (TSubst r) = TSubst $ r >>~ M.map (subst m)
  
 instance Monoid TSubst where
   s `mappend` t = TSubst $ do st <- getTSubst (subst s t) 
@@ -926,11 +942,11 @@ instance Subst Env TSubst where
           . subst (typeMap m)
   
 instance Subst Env FSubst where
-  subst m r = subst (flowMap m) r
+  subst m = subst (flowMap m)
 instance Subst Env SSubst where
-  subst m r = subst (scaleMap m) r
+  subst m = subst (scaleMap m)
 instance Subst Env BSubst where
-  subst m r = subst (baseMap m) r
+  subst m = subst (baseMap m)
 
  
 instance Subst Env (Analysis TypeScheme) where
@@ -963,35 +979,44 @@ instance Subst Env Base where
   subst = subst . baseMap
 
 instance Subst TSubst Env where
-  subst s env = env { typeMap = subst s (typeMap env) }
+  subst s env = 
+    env { typeMap = subst s (typeMap env) 
+        }
   
 instance Subst FSubst Env where
-  subst s env = env { typeMap = subst s (typeMap env), flowMap = s <> flowMap env }
+  subst s env = 
+    env { typeMap = subst s (typeMap env)
+        , flowMap = s <> flowMap env
+        }
   
 instance Subst SSubst Env where
-  subst s env = env { typeMap = subst s (typeMap env), scaleMap = s <> scaleMap env }
+  subst s env = 
+    env { typeMap = subst s (typeMap env)
+        , scaleMap = s <> scaleMap env 
+        }
 
 instance Subst BSubst Env where
-  subst s env = env { typeMap = subst s (typeMap env), baseMap = s <> baseMap env }
+  subst s env = 
+    env { typeMap = subst s (typeMap env)
+        , baseMap = s <> baseMap env
+        }
 
 instance Monoid Env where                    
   -- |Substitutions can be chained by first recursively substituting the left substitution
   --  over the right environment then unioning with the left invironment
   p `mappend` q = 
-    Env 
-    { typeMap  = typeMap  p <> typeMap  q
-    , flowMap  = flowMap  p <> flowMap  q
-    , scaleMap = scaleMap p <> scaleMap q
-    , baseMap  = baseMap  p <> baseMap  q
-    }
+    Env { typeMap  = typeMap  p <> typeMap  q
+        , flowMap  = flowMap  p <> flowMap  q
+        , scaleMap = scaleMap p <> scaleMap q
+        , baseMap  = baseMap  p <> baseMap  q
+        }
       
   mempty = 
-    Env 
-    { typeMap  = mempty 
-    , flowMap  = mempty
-    , scaleMap = mempty
-    , baseMap  = mempty
-    }
+    Env { typeMap  = mempty 
+        , flowMap  = mempty
+        , scaleMap = mempty
+        , baseMap  = mempty
+        }
 
   
 instance Subst FSubst Constraint where
@@ -1013,16 +1038,26 @@ instance Singleton TSubst (Name, TypeScheme) where
   singleton (k, a) = TSubst . return $ M.fromList [(k, a)] 
 
 instance Singleton Env (TVar, Type) where
-  singleton (k, a) = mempty { typeMap = TSubst . return $ M.singleton k (Type a) } 
+  singleton (k, a) = 
+    mempty { typeMap = TSubst . return $ M.singleton k (Type a) 
+           } 
 
 instance Singleton Env (TVar, TypeScheme) where
-  singleton (k, a) = mempty { typeMap = TSubst . return $ M.singleton k a } 
+  singleton (k, a) = 
+    mempty { typeMap = TSubst . return $ M.singleton k a 
+           } 
   
 instance Singleton Env (FVar, Flow) where
-  singleton (k, a) = mempty { flowMap = FSubst $ M.singleton k a }
+  singleton (k, a) = 
+    mempty { flowMap = FSubst $ M.singleton k a 
+           }
 
 instance Singleton Env (SVar, Scale) where
-  singleton (k, a) = mempty { scaleMap = SSubst $ M.singleton k a }
+  singleton (k, a) = 
+    mempty { scaleMap = SSubst $ M.singleton k a 
+           }
 
 instance Singleton Env (BVar, Base) where
-  singleton (k, a) = mempty { baseMap = BSubst $ M.singleton k a }
+  singleton (k, a) = 
+    mempty { baseMap = BSubst $ M.singleton k a 
+           }

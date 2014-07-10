@@ -1,4 +1,5 @@
 -- (C) 2013 Pepijn Kokke & Wout Elsinghorst
+-- (C) 2014 Wout Elsinghorst
 
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE UndecidableInstances #-}
@@ -67,7 +68,9 @@ throwMeasureError = Left
 unifyScales :: Scale -> Scale -> Either MeasureError SSubst
 unifyScales p q = unifyOne $ SMul p (SInv q)
   
-data Term = Variable SVar | Concrete SCon
+data Term 
+  = Variable SVar 
+  | Concrete SCon
   deriving (Eq, Show)
   
 instance Ord Term where
@@ -133,7 +136,7 @@ normalize s = (varList, conList) where
 
                                    
 scalify :: (String -> Scale) -> [(String, Integer)] -> Scale
-scalify maker = flip foldr SNil $ \(v, k) xs ->
+scalify maker xs = foldR SNil xs $ \(v, k) xs ->
   case k `compare` 0 of
        GT -> SMul xs $ foldr1 SMul $ L.genericReplicate k (maker v)
        EQ -> xs
@@ -299,14 +302,14 @@ solveBaseConstraints _ = loop iterationCount mempty where
                                                  <> S.map packPreservation c3
                                                  )
                                                  
-  removeSolved = unionMap (\r -> case r of 
-                                   BaseEquality t -> if S.size t == 0 || 
-                                                        S.size t == 1 
-                                                        then mempty 
-                                                        else S.singleton $ BaseEquality t
-                
-                                   _              -> S.singleton r
-                          )
+  removeSolved xs = xs `unionBind` \r -> 
+    case r of 
+      BaseEquality t -> if S.size t == 0 || 
+                           S.size t == 1 
+                           then mempty 
+                           else S.singleton $ BaseEquality t
+
+      _              -> S.singleton r
                                               
   unpackEquality  (BaseEquality gr) = singleton gr
   unpackEquality _                  = S.empty
@@ -324,46 +327,54 @@ solveBaseConstraints _ = loop iterationCount mempty where
 instance Solver BaseConstraint BSubst where
   solveConstraints = solveBaseConstraints
 
-type BaseSelection = (Base, Base, Base)
+type BaseSelection 
+  = (Base, Base, Base)
   
 -- |Constraints added by addition of two vagriables  
 solveBaseSelection :: Set BaseSelection -> (BSubst, Set BaseSelection)
 solveBaseSelection = F.foldMap solver where
-  solver r@(x, y, BVar z) = if x == BNil
-                               then (singleton (z, y), mempty) 
-                               else
-                            if y == BNil
-                               then (singleton (z, x), mempty) 
-                               else (mempty, S.singleton r)
-  solver r@(BNil, y, z) = case (y, z) of
-                            (BVar a,  b) -> (singleton (a, b), mempty)
-                            (a,  BVar b) -> (singleton (b, a), mempty)
-                            (BNil, BNil) -> (mempty, mempty)
-                            (_,       _) -> (mempty, S.singleton r)
-  solver r@(x, BNil, z) = case (x, z) of
-                            (BVar a,  b) -> (singleton (a, b), mempty)
-                            (a,  BVar b) -> (singleton (b, a), mempty)
-                            (BNil, BNil) -> (mempty, mempty)
-                            (_,       _) -> (mempty, S.singleton r)        
+  solver r@(x, y, BVar z) = 
+    if x == BNil
+       then (singleton (z, y), mempty) 
+       else
+    if y == BNil
+       then (singleton (z, x), mempty) 
+       else (mempty, S.singleton r)
+  solver r@(BNil, y, z) = 
+    case (y, z) of
+      (BVar a,  b) -> (singleton (a, b), mempty)
+      (a,  BVar b) -> (singleton (b, a), mempty)
+      (BNil, BNil) -> (mempty, mempty)
+      (_,       _) -> (mempty, S.singleton r)
+  solver r@(x, BNil, z) = 
+    case (x, z) of
+      (BVar a,  b) -> (singleton (a, b), mempty)
+      (a,  BVar b) -> (singleton (b, a), mempty)
+      (BNil, BNil) -> (mempty, mempty)
+      (_,       _) -> (mempty, S.singleton r)        
 
                             
-type BasePreservation = (Base, Base, Base)
+type BasePreservation 
+  = (Base, Base, Base)
                                     
 -- |Constraints added by subtraction of two variables  
 solveBasePreservation :: Set BasePreservation -> (BSubst, Set BasePreservation)
 solveBasePreservation = F.foldMap solver where
-  solver r@(x, y, BVar z) = if y == BNil
-                               then (singleton (z, x), mempty) 
-                               else
-                            if x == y
-                               then (singleton (z, BNil), mempty) 
-                               else (mempty, S.singleton r) 
-  solver r@(x, BNil, z) = case (x, z) of
-                            (BVar a, b) -> (singleton (a, b), mempty)
-                            (a, BVar b) -> (singleton (b, a), mempty)
-                            (_,      _) -> (mempty, S.singleton r)        
+  solver r@(x, y, BVar z) = 
+    if y == BNil
+       then (singleton (z, x), mempty) 
+       else
+    if x == y
+       then (singleton (z, BNil), mempty) 
+       else (mempty, S.singleton r) 
+  solver r@(x, BNil, z) = 
+    case (x, z) of
+      (BVar a, b) -> (singleton (a, b), mempty)
+      (a, BVar b) -> (singleton (b, a), mempty)
+      (_,      _) -> (mempty, S.singleton r)        
 
-type BaseEquality = Set Base
+type BaseEquality 
+  = Set Base
                            
                           
 -- |See @solveScaleEquality for details
@@ -388,7 +399,7 @@ solveBaseEquality = loop mempty where
     single [  x  ] = Just $ x
     single (x:y:_) = Nothing
     
-    withSingle (Just  x) = foldr (\v m -> m <> singleton (v,x)) mempty vars
+    withSingle (Just  x) = foldR mempty vars $ \v m -> m <> singleton (v,x)
     withSingle (Nothing) = mempty
     
   getBCons = filter isBCon where
@@ -404,7 +415,7 @@ solveBaseEquality = loop mempty where
 printScaleInformation :: Set ScaleConstraint -> String
 printScaleInformation m =
   let prefix = "{\n"
-      content = S.foldr (\x xs -> "  " ++ show x ++ "\n" ++ xs) "" m
+      content = foldR "" m $ \x xs -> "  " ++ show x ++ "\n" ++ xs
       suffix = "}"
   in prefix ++ content ++ suffix
 
@@ -412,7 +423,7 @@ printScaleInformation m =
 printBaseInformation :: Set BaseConstraint -> String
 printBaseInformation m = 
   let prefix = "{\n"
-      content = S.foldr (\x xs -> "  " ++ show x ++ "\n" ++ xs) "" m
+      content = foldR "" m $ \x xs -> "  " ++ show x ++ "\n" ++ xs
       suffix = "}"
   in prefix ++ content ++ suffix
   
@@ -421,8 +432,8 @@ printBaseInformation m =
 instance (Subst e Scale) => Subst e ScaleConstraint where
   subst m (ScaleEquality ss) = ScaleEquality $ subst m ss
 
-newtype SSubst = SSubst { 
-    getSSubst :: Map SVar Scale
+newtype SSubst = SSubst 
+  { getSSubst :: Map SVar Scale
   } deriving (Eq, Ord, Show)
 
 instance Subst SSubst SSubst where
@@ -436,8 +447,7 @@ instance Subst SSubst Scale where
   subst m v@_          = v
    
 instance Monoid SSubst where
-  s `mappend` t = SSubst $ let r = getSSubst (subst s t) `M.union` getSSubst s
-                           in M.map simplify r
+  s `mappend` t = SSubst $ M.map simplify $ getSSubst (subst s t) `M.union` getSSubst s
   mempty        = SSubst $ M.empty
                 
 instance Singleton SSubst (SVar,Scale) where
@@ -450,8 +460,8 @@ instance (Subst e Base) => Subst e BaseConstraint where
   subst m (BasePreservation (x, y) z) = BasePreservation (subst m x, subst m y) (subst m z)
   subst m (BaseSelection (x, y) z)    = BaseSelection (subst m x, subst m y) (subst m z)
 
-newtype BSubst = BSubst { 
-  getBSubst :: Map BVar Base
+newtype BSubst = BSubst 
+  { getBSubst :: Map BVar Base
   } deriving (Eq, Ord, Show)
 
 instance Subst BSubst BSubst where
@@ -470,4 +480,4 @@ instance Monoid BSubst where
   mempty        = BSubst $ mempty
   
 instance Singleton BSubst (BVar, Base) where
-  singleton (k,a) = BSubst (M.singleton k a)
+  singleton (k, a) = BSubst (M.singleton k a)

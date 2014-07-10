@@ -29,12 +29,12 @@ type Label = String
 data Flow 
   = FVar FVar   -- ^ Flow variable
   | FSet (Set Label)
-    deriving (Eq, Ord, Show)
+  deriving (Eq, Ord, Show)
     
 -- |Flow constraints generated for Control Flow Analysis 
 data FlowConstraint
   = FlowEquality Flow Flow
-    deriving (Eq, Ord, Show) 
+  deriving (Eq, Ord, Show) 
 
  
 -- |Solve the set of flow constraints obtained from the inference algorithm and 
@@ -46,13 +46,13 @@ solveFlowConstraints s0 c0 =
   let (equalities, programPoints, vars, c1) = info where
         info :: (Set (FVar, FVar), [(Label, Set FVar)], Set FVar, Set FlowConstraint)
         info = flip F.foldMap c0 $ \r@(FlowEquality a b) -> 
-                                      case (a, b) of 
-                                        (FVar a, FVar b) -> (S.singleton (a, b), mempty, S.fromList [a, b], mempty)
-                                        (FVar a, FSet l) -> (mempty, map (\l -> (l, S.singleton a) ) (S.toList l), S.singleton a, mempty  )
-                                        (FSet l, FVar b) -> (mempty, map (\l -> (l, S.singleton b) ) (S.toList l), S.singleton b, mempty  )
-                                        (FSet a, FSet b) -> if a == b then (mempty, mempty, mempty, mempty) 
-                                                                      else (mempty, mempty, mempty, S.singleton r)
-        
+          case (a, b) of 
+            (FVar a, FVar b) -> (S.singleton (a, b), mempty, S.fromList [a, b], mempty)
+            (FVar a, FSet l) -> (mempty, map (\l -> (l, S.singleton a) ) (S.toList l), S.singleton a, mempty  )
+            (FSet l, FVar b) -> (mempty, map (\l -> (l, S.singleton b) ) (S.toList l), S.singleton b, mempty  )
+            (FSet a, FSet b) -> if a == b then (mempty, mempty, mempty, mempty) 
+                                          else (mempty, mempty, mempty, S.singleton r)
+
       findReachable :: Set FVar -> Set FVar
       findReachable src = src        >>>= \v      -> 
                           equalities >>>= \(a, b) -> 
@@ -85,7 +85,7 @@ solveFlowConstraints s0 c0 =
                                                                     else Just a
                             
       subst = filterUnreachable . flip M.fromSet vars $ \v -> FSet $ findLabels v 
-          in (FSubst subst <> s0, c1)
+  in (FSubst subst <> s0, c1)
   
 instance Solver FlowConstraint FSubst where
   solveConstraints = solveFlowConstraints
@@ -102,12 +102,12 @@ printFlowInformation m =
         
       printRewrite f v = "  {" ++ f ++ "}\t~> " ++ printSet v ++ "\n"
 
-      content = S.foldr (\r as -> case r of 
-                                       FlowEquality (FVar a) (FVar b) -> "  {" ++ a ++ "}\t~  {" ++ b ++ "}\n" ++ as
-                                       FlowEquality (FSet p) (FSet q) -> "  " ++ printSet p ++ " ~ " ++ printSet q ++ "\n" ++ as
-                                       FlowEquality (FVar f) (FSet r) -> printRewrite f r ++ as
-                                       FlowEquality (FSet r) (FVar f) -> printRewrite f r ++ as
-                      ) "" m 
+      content = foldR "" m $ \r as -> 
+        case r of 
+          FlowEquality (FVar a) (FVar b) -> "  {" ++ a ++ "}\t~  {" ++ b ++ "}\n" ++ as
+          FlowEquality (FSet p) (FSet q) -> "  " ++ printSet p ++ " ~ " ++ printSet q ++ "\n" ++ as
+          FlowEquality (FVar f) (FSet r) -> printRewrite f r ++ as
+          FlowEquality (FSet r) (FVar f) -> printRewrite f r ++ as
       suffix = "}"
   in prefix ++ content ++ suffix
   
@@ -115,8 +115,8 @@ printFlowInformation m =
  
 instance (Subst e Flow) => Subst e FlowConstraint where
   subst m (FlowEquality a b) = FlowEquality (subst m a) (subst m b)
-newtype FSubst = FSubst { 
-    getFSubst :: Map FVar Flow
+newtype FSubst = FSubst 
+  { getFSubst :: Map FVar Flow
   } deriving (Eq, Ord, Show)
  
 instance Subst FSubst Flow where
@@ -125,10 +125,6 @@ instance Subst FSubst Flow where
   
 instance Subst FSubst FSubst where
   subst m (FSubst q) = FSubst $ subst m q
- 
- 
-    
-
  
 instance Monoid FSubst where
   s `mappend` t = FSubst $ getFSubst (subst s t) `M.union` getFSubst s

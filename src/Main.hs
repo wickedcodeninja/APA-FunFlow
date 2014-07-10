@@ -12,7 +12,8 @@ import FUN.Base      -- ^ Abstract syntax tree
 import FUN.Parsing   -- ^ Parser
 import FUN.Labeling  -- ^ Labeling
 import FUN.Analyses 
-  ( checkProgram, printProgram
+  ( checkProgram
+  , printProgram
   , PrintAnnotations (..), Annotations (..), setAnnotations
   , Constraint
   , TVar, TypeScheme
@@ -22,7 +23,6 @@ import FUN.Analyses
   )
 import FUN.Analyses.Flow
   ( printFlowInformation 
-  , solveFlowConstraints
   )
 import FUN.Analyses.Measure
   ( printScaleInformation 
@@ -78,8 +78,7 @@ example = Prog $ case 1 of
                    6 -> exBad           -- ^ Not bad anymore!
                    
 exLetGen = fmap parseDecl $ 
-  [ "f x y = let r a = a; Pair (r x, s y)"
-                 
+  [ "f x y = let r a = a; Pair (r x, s y)"          
   , "g x y = f (f x y) (f y x)"
   ]
 

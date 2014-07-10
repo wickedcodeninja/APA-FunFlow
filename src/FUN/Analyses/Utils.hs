@@ -4,7 +4,13 @@
 {-# LANGUAGE MultiParamTypeClasses, FunctionalDependencies #-}
 module FUN.Analyses.Utils where
 
+import Prelude hiding 
+  ( foldr
+  , foldl
+  )
+
 import Control.Applicative
+import Data.Foldable
 
 import Data.Map (Map)
 import Data.Set (Set)
@@ -62,6 +68,10 @@ maybeHead (x:_) = Just x
 unionMap :: (Ord a, Ord b) => (a -> Set b) -> Set a -> Set b
 unionMap f = S.unions . map f . S.toList
 
+unionBind :: (Ord a, Ord b) => Set a -> (a -> Set b) -> Set b
+unionBind = flip unionMap
+
+
 (<&>) :: Functor f => f a -> (a -> b) -> f b
 (<&>) = flip fmap
 
@@ -91,3 +101,8 @@ flip3 f = \b c a -> f a b c
 flip4 :: (a -> b -> c -> d -> e) -> (b -> c -> d -> a -> e)
 flip4 f = \b c d a -> f a b c d 
 
+foldR :: Foldable f => b -> f a -> (a -> b -> b) -> b
+foldR = flip3 foldr
+
+foldL :: Foldable f => a -> f b -> (a -> b -> a) -> a
+foldL = flip3 foldl'
